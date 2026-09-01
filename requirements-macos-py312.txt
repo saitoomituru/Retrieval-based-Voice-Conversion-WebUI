@@ -1,0 +1,54 @@
+# requirments_cpu_py312.txtをmacOS x86_64向けに局所適応する。
+# macOS向けPyTorch CPU wheelはPyPIで「+cpu」suffixなしに配布される。
+--index-url https://pypi.org/simple
+
+# この実機で取得できたmacOS x86_64向け最終release。
+torch==2.2.2
+torchaudio==2.2.2
+torchvision==0.17.2
+
+setuptools>=75.0,<81
+wheel>=0.45,<1
+packaging>=24.0
+
+av>=15.1.0,<16
+einops>=0.8.0,<1
+faiss-cpu>=1.13.0,<2
+ffmpeg-python>=0.2.0,<1
+FreeSimpleGUI>=5.1.0,<5.2
+librosa>=0.10.2,<0.11
+# 1.10以降が依存するhyper-connectionsはTorch 2.3以上を要求する。
+local-attention==1.9.15
+matplotlib>=3.8.2,<4
+networkx>=3.2.0,<4
+numpy>=1.26.4,<2
+numba==0.61.2
+
+# この実機でmacOS x86_64 wheelを取得できた最終release。
+onnxruntime==1.23.2
+coloredlogs>=15.0,<16
+opencv-python-headless>=4.10.0,<5
+praat-parselmouth>=0.4.5,<1
+PyYAML>=6.0
+scikit-learn>=1.6.0,<2
+scipy>=1.13.1,<2
+sounddevice>=0.5.0,<1
+soundfile>=0.13.0,<1
+tensorboard>=2.19.0
+torchfcpe>=0.0.4,<0.1
+tqdm>=4.67.0,<5
+transformers>=4.49.0,<4.50
+
+gradio>=3.14.0,<3.15
+altair>=4.2.0,<5
+anyio>=3.6.2,<4
+fastapi>=0.88.0,<0.100
+httpx>=0.23.0,<0.24
+markdown-it-py>=2.2.0,<3
+mdit-py-plugins>=0.3.3,<0.4
+pydantic>=1.10.13,<2
+pyparsing>=3.0.9,<3.1
+starlette>=0.22.0,<0.28
+uvicorn>=0.20.0,<0.23
+websockets>=10.4,<11
+huggingface-hub>=0.34,<1

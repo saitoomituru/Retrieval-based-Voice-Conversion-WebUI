@@ -134,7 +134,12 @@ def main():
     if n_gpus < 1:
         # patch to unblock people without gpus. there is probably a better way.
         print(i18n("未检测到可用显卡，将使用CPU训练，耗时可能较长"))
-        n_gpus = 1
+        # CPU single-process training must not initialize a TCPStore. Apart
+        # from being unnecessary, binding a local rendezvous socket can be
+        # unavailable in sandboxed macOS environments.
+        logger = utils.get_logger(hps.model_dir)
+        run(0, 1, hps, logger, False)
+        return
     logger = utils.get_logger(hps.model_dir)
     logger.info(i18n("训练设备规则选择的精度：%s"), training_dtype)
     if single_cuda:
@@ -191,16 +196,17 @@ def run(rank, n_gpus, hps, logger, use_ddp):
         collate_fn = TextAudioCollateMultiNSFsid()
     else:
         collate_fn = TextAudioCollate()
-    train_loader = DataLoader(
-        train_dataset,
-        num_workers=4,
-        shuffle=False,
-        pin_memory=True,
-        collate_fn=collate_fn,
-        batch_sampler=train_sampler,
-        persistent_workers=True,
-        prefetch_factor=8,
-    )
+    loader_workers = 4 if torch.cuda.is_available() else 0
+    loader_kwargs = {
+        "num_workers": loader_workers,
+        "shuffle": False,
+        "pin_memory": torch.cuda.is_available(),
+        "collate_fn": collate_fn,
+        "batch_sampler": train_sampler,
+    }
+    if loader_workers:
+        loader_kwargs.update(persistent_workers=True, prefetch_factor=8)
+    train_loader = DataLoader(train_dataset, **loader_kwargs)
     if hps.if_f0 == 1:
         net_g = RVC_Model_f0(
             hps.data.filter_length // 2 + 1,

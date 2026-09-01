@@ -25,6 +25,16 @@ os.environ.setdefault("index_root", "logs")
 os.environ.setdefault("outside_index_root", "assets/indices")
 os.environ.setdefault("rmvpe_root", "assets/rmvpe")
 
+default_input_audio = os.environ.get("RVC_DEFAULT_INPUT_AUDIO", "").strip()
+if default_input_audio and not os.path.isfile(default_input_audio):
+    warnings.warn(
+        f"RVC_DEFAULT_INPUT_AUDIO does not exist: {default_input_audio}",
+        RuntimeWarning,
+    )
+    default_input_audio = None
+elif not default_input_audio:
+    default_input_audio = None
+
 now_dir = os.getcwd()
 tmp = os.path.join(now_dir, "TEMP")
 os.makedirs(tmp, exist_ok=True)
@@ -113,10 +123,11 @@ def is_gradio_port_in_use_error(error, port):
 
 def launch_webui_with_port_fallback(app, config):
     """Launch Gradio, increasing the requested port until startup succeeds."""
+    server_host = os.environ.get("RVC_SERVER_HOST", "0.0.0.0")
     next_port = config.listen_port
     queued_app = app.queue(concurrency_count=511, max_size=1022)
     while True:
-        config.listen_port = find_available_port(next_port)
+        config.listen_port = find_available_port(next_port, server_host)
         if config.listen_port != next_port:
             logger.warning(
                 "Port %s is occupied; trying port %s instead.",
@@ -125,7 +136,7 @@ def launch_webui_with_port_fallback(app, config):
             )
         try:
             queued_app.launch(
-                server_name="0.0.0.0",
+                server_name=server_host,
                 inbrowser=not config.noautoopen,
                 server_port=config.listen_port,
                 quiet=True,
@@ -864,7 +875,7 @@ def run_preprocess_dataset(
         if is_multispeaker_mode(training_mode)
         else ""
     )
-    cmd = '"%s" train/preprocess.py "%s" %s %s "%s/logs/%s" %s %.1f%s' % (
+    cmd = '"%s" -m train.preprocess "%s" %s %s "%s/logs/%s" %s %.1f%s' % (
         config.python_cmd,
         trainset_dir,
         sr,
@@ -967,7 +978,7 @@ def run_extract_f0_feature(
             f0method == "rmvpe" and not rmvpe_devices and not config.dml
         ):
             cmd = (
-                '"%s" train/dataset/extract_f0.py cpu "%s/logs/%s" %s %s'
+                '"%s" -m train.dataset.extract_f0 cpu "%s/logs/%s" %s %s'
                 % (config.python_cmd, now_dir, exp_dir, n_p, f0method)
             )
             processes.append(start_train_process(state, cmd))
@@ -975,7 +986,7 @@ def run_extract_f0_feature(
             count = len(rmvpe_devices)
             for index, gpu in enumerate(rmvpe_devices):
                 cmd = (
-                    '"%s" train/dataset/extract_f0.py cuda %s %s %s "%s/logs/%s" %s'
+                    '"%s" -m train.dataset.extract_f0 cuda %s %s %s "%s/logs/%s" %s'
                     % (
                         config.python_cmd,
                         count,
@@ -989,7 +1000,7 @@ def run_extract_f0_feature(
                 processes.append(start_train_process(state, cmd))
         else:
             cmd = (
-                '"%s" train/dataset/extract_f0.py dml "%s/logs/%s"'
+                '"%s" -m train.dataset.extract_f0 dml "%s/logs/%s"'
                 % (config.python_cmd, now_dir, exp_dir)
             )
             processes.append(start_train_process(state, cmd))
@@ -1008,7 +1019,7 @@ def run_extract_f0_feature(
         count = len(feature_gpus)
         for index, gpu in enumerate(feature_gpus):
             cmd = (
-                '"%s" train/dataset/extract_hubert_feature.py %s %s %s %s "%s/logs/%s" %s %s'
+                '"%s" -m train.dataset.extract_hubert_feature %s %s %s %s "%s/logs/%s" %s %s'
                 % (
                     config.python_cmd,
                     config.device,
@@ -1024,7 +1035,7 @@ def run_extract_f0_feature(
             processes.append(start_train_process(state, cmd))
     else:
         cmd = (
-            '"%s" train/dataset/extract_hubert_feature.py %s 1 0 "%s/logs/%s" %s %s'
+            '"%s" -m train.dataset.extract_hubert_feature %s 1 0 "%s/logs/%s" %s %s'
             % (
                 config.python_cmd,
                 config.device,
@@ -1307,7 +1318,7 @@ def run_train_model(
         f.write("\n")
     if gpus16:
         cmd = (
-            '"%s" train/train.py -e "%s" -sr %s -f0 %s -bs %s -g %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
+            '"%s" -m train.train -e "%s" -sr %s -f0 %s -bs %s -g %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
             % (
                 config.python_cmd,
                 exp_dir1,
@@ -1327,7 +1338,7 @@ def run_train_model(
         )
     else:
         cmd = (
-            '"%s" train/train.py -e "%s" -sr %s -f0 %s -bs %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
+            '"%s" -m train.train -e "%s" -sr %s -f0 %s -bs %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
             % (
                 config.python_cmd,
                 exp_dir1,
@@ -1458,7 +1469,7 @@ def run_train_index(
         else "auto"
     )
     cmd = (
-        '"%s" train/train_index.py "%s" %s "%s" %s %s'
+        '"%s" -m train.train_index "%s" %s "%s" %s %s'
         % (
             config.python_cmd,
             exp_dir1,
@@ -1879,6 +1890,7 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                                         interactive=True,
                                     )
                             input_audio0 = gr.Audio(
+                                value=default_input_audio,
                                 label=i18n("拖拽或点击上传待处理音频"),
                                 source="upload",
                                 type="filepath",

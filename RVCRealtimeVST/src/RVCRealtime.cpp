@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -25,45 +27,56 @@ const IColor kAmber = IColor(255, 230, 160, 48);
 
 enum class PathRow { RvcRoot, Python, Model, Index };
 
-std::wstring SettingsFilePath(const bool createDirectory)
+// Plain `Key=Value` text file, one setting per line. Deliberately not the Win32 INI
+// API (GetPrivateProfileStringW/WritePrivateProfileStringW), which does not exist
+// outside Windows: iplug::INIPath() already resolves a platform-correct settings
+// directory (AppData on Windows, Application Support on macOS).
+std::filesystem::path SettingsFilePath(const bool createDirectory)
 {
   WDL_String directory;
   iplug::INIPath(directory, BUNDLE_NAME);
-  const UTF8AsUTF16 directoryWide(directory.Get());
-  if (createDirectory)
-    CreateDirectoryW(directoryWide.Get(), nullptr);
-  std::wstring result(directoryWide.Get());
-  result += L"\\settings.ini";
-  return result;
+  std::filesystem::path path(directory.Get());
+  if (createDirectory) {
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+  }
+  path /= "settings.ini";
+  return path;
 }
 
-std::string ReadSetting(const wchar_t* key)
+std::string ReadSetting(const char* key)
 {
-  const std::wstring settingsPath = SettingsFilePath(false);
-  std::vector<wchar_t> value(32768, L'\0');
-  GetPrivateProfileStringW(L"Paths", key, L"", value.data(), static_cast<DWORD>(value.size()), settingsPath.c_str());
-  return UTF16AsUTF8(value.data()).Get();
+  std::ifstream file(SettingsFilePath(false));
+  if (!file.is_open())
+    return {};
+  std::string line;
+  const std::string prefix = std::string(key) + "=";
+  while (std::getline(file, line)) {
+    if (line.compare(0, prefix.size(), prefix) == 0)
+      return line.substr(prefix.size());
+  }
+  return {};
 }
 
-void WriteSetting(const std::wstring& settingsPath, const wchar_t* key, const std::string& value)
+void WriteSetting(std::ofstream& file, const char* key, const std::string& value)
 {
-  WritePrivateProfileStringW(L"Paths", key, UTF8AsUTF16(value.c_str()).Get(), settingsPath.c_str());
+  file << key << "=" << value << "\n";
 }
 
 bool PathIsFile(const std::string& path)
 {
   if (path.empty())
     return false;
-  const DWORD attributes = GetFileAttributesW(UTF8AsUTF16(path.c_str()).Get());
-  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+  std::error_code ec;
+  return std::filesystem::is_regular_file(path, ec);
 }
 
 bool PathIsDirectory(const std::string& path)
 {
   if (path.empty())
     return false;
-  const DWORD attributes = GetFileAttributesW(UTF8AsUTF16(path.c_str()).Get());
-  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+  std::error_code ec;
+  return std::filesystem::is_directory(path, ec);
 }
 
 std::string TrimTrailingSeparators(std::string path)
@@ -73,14 +86,15 @@ std::string TrimTrailingSeparators(std::string path)
   return path;
 }
 
+// `relative` is always written with '/' at call sites; std::filesystem accepts '/'
+// as a directory separator on Windows too and renders the platform-native form.
 std::string JoinPath(const std::string& root, const char* relative)
 {
   if (root.empty())
     return {};
-  std::string result = TrimTrailingSeparators(root);
-  result += "\\";
-  result += relative;
-  return result;
+  std::filesystem::path path(TrimTrailingSeparators(root));
+  path /= relative;
+  return path.string();
 }
 
 std::string ParentDirectory(const std::string& filePath)
@@ -89,11 +103,18 @@ std::string ParentDirectory(const std::string& filePath)
   return separator == std::string::npos ? std::string() : filePath.substr(0, separator);
 }
 
+// Windows-only check (PE header via GetBinaryTypeW); RVC's runtime/python.exe
+// convention doesn't exist outside Windows, so this only guards the Windows path.
 bool Is64BitExecutable(const std::string& path)
 {
+#if defined(_WIN32)
   DWORD binaryType = 0;
   return GetBinaryTypeW(UTF8AsUTF16(path.c_str()).Get(), &binaryType) != FALSE
       && binaryType == SCS_64BIT_BINARY;
+#else
+  (void)path;
+  return true;
+#endif
 }
 
 IVStyle MakeStyle()
@@ -159,7 +180,7 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
 
   LoadUserConfiguration();
   if (mPythonPath.GetLength() == 0 && mRvcRoot.GetLength() > 0) {
-    const std::string detected = JoinPath(mRvcRoot.Get(), "runtime\\python.exe");
+    const std::string detected = JoinPath(mRvcRoot.Get(), "runtime/python.exe");
     if (PathIsFile(detected))
       mPythonPath.Set(detected.c_str());
   }
@@ -532,7 +553,7 @@ void RVCRealtime::ChooseIndex(IGraphics* graphics)
 void RVCRealtime::SetRvcRoot(const char* path)
 {
   const std::string root = TrimTrailingSeparators(path != nullptr ? path : "");
-  const std::string detectedPython = JoinPath(root, "runtime\\python.exe");
+  const std::string detectedPython = JoinPath(root, "runtime/python.exe");
   const bool pythonDetected = PathIsFile(detectedPython);
   {
     std::lock_guard<std::mutex> lock(mStateMutex);
@@ -604,8 +625,8 @@ bool RVCRealtime::ValidateConfiguration(std::string& error) const
   }
   if (root.empty()) { error = "Select the RVC package root."; return false; }
   if (!PathIsDirectory(root)) { error = "RVC root folder does not exist."; return false; }
-  if (!PathIsFile(JoinPath(root, "infer\\rtrvc.py"))) { error = "RVC source not found: infer\\rtrvc.py."; return false; }
-  if (!PathIsFile(JoinPath(root, "configs\\config.py"))) { error = "RVC source not found: configs\\config.py."; return false; }
+  if (!PathIsFile(JoinPath(root, "infer/rtrvc.py"))) { error = "RVC source not found: infer\\rtrvc.py."; return false; }
+  if (!PathIsFile(JoinPath(root, "configs/config.py"))) { error = "RVC source not found: configs\\config.py."; return false; }
   if (python.empty()) { error = "runtime\\python.exe not found; select Python manually."; return false; }
   if (!PathIsFile(python)) { error = "Selected Python executable does not exist."; return false; }
   if (!Is64BitExecutable(python)) { error = "Selected Python must be a 64-bit executable."; return false; }
@@ -618,10 +639,10 @@ bool RVCRealtime::ValidateConfiguration(std::string& error) const
 
 void RVCRealtime::LoadUserConfiguration()
 {
-  const std::string root = ReadSetting(L"RvcRoot");
-  const std::string python = ReadSetting(L"PythonPath");
-  const std::string model = ReadSetting(L"ModelPath");
-  const std::string index = ReadSetting(L"IndexPath");
+  const std::string root = ReadSetting("RvcRoot");
+  const std::string python = ReadSetting("PythonPath");
+  const std::string model = ReadSetting("ModelPath");
+  const std::string index = ReadSetting("IndexPath");
   if (!root.empty()) mRvcRoot.Set(root.c_str());
   if (!python.empty()) mPythonPath.Set(python.c_str());
   if (!model.empty()) mModelPath.Set(model.c_str());
@@ -638,11 +659,13 @@ void RVCRealtime::SaveUserConfiguration() const
     model = mModelPath.Get();
     index = mIndexPath.Get();
   }
-  const std::wstring settingsPath = SettingsFilePath(true);
-  WriteSetting(settingsPath, L"RvcRoot", root);
-  WriteSetting(settingsPath, L"PythonPath", python);
-  WriteSetting(settingsPath, L"ModelPath", model);
-  WriteSetting(settingsPath, L"IndexPath", index);
+  std::ofstream file(SettingsFilePath(true), std::ios::trunc);
+  if (!file.is_open())
+    return;
+  WriteSetting(file, "RvcRoot", root);
+  WriteSetting(file, "PythonPath", python);
+  WriteSetting(file, "ModelPath", model);
+  WriteSetting(file, "IndexPath", index);
 }
 
 void RVCRealtime::UpdateFileLabels()

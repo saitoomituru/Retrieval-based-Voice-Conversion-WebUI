@@ -33,6 +33,14 @@
 #define VST3_SUBCATEGORY "Fx"
 #define ROBOTO_FN "Roboto-Regular.ttf"
 
+// Required by iPlug2's APP (standalone) host, used for the macOS human GUI
+// check ahead of the real AU target (issue #5).
+#define APP_NUM_CHANNELS 2
+#define APP_N_VECTOR_WAIT 0
+#define APP_MULT 1
+#define APP_COPY_AUV3 0
+#define APP_SIGNAL_VECTOR_SIZE 64
+
 #define RVC_WORKER_RELATIVE_PATH "worker\\rvc_worker.py"
 #define RVC_VST2_RESOURCES_DIR "RVCRealtime.resources"
 #define RVC_DEFAULT_ROOT ""

@@ -1,8 +1,11 @@
 #include "WorkerClient.hpp"
 #include "config.h"
 
+// Windows-specific IPC bridge (shared memory + named events). CMakeLists.txt only
+// compiles this translation unit on WIN32; see WorkerClient_stub_mac.cpp for the
+// non-Windows placeholder (issue #3/#6 own the real macOS IPC implementation).
 #if !defined(_WIN32)
-#error RVC Realtime worker bridge currently targets Windows.
+#error WorkerClient_win.cpp must only be compiled on Windows.
 #endif
 
 #include <windows.h>

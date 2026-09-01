@@ -13,14 +13,13 @@ option(RVC_BUILD_SMOKE_TEST "Build the standalone worker smoke test" ON)
 set(IPLUG_DEPLOY_PLUGINS OFF CACHE BOOL "Keep plugin artifacts inside this project" FORCE)
 set(IPLUG2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/iPlug2" CACHE PATH "iPlug2 root directory")
 
-# Windows keeps the existing VST2/VST3 target set. macOS defaults to the
-# standalone APP format only: it is the fastest way to get a launchable
-# window for a human GUI check (issue #5's AU target is a separate step
-# that still needs the VST/AU SDKs prepared below).
+# Windows keeps the existing VST2/VST3 target set. macOS builds the standalone
+# APP (human GUI check, no DAW/auval needed) plus AU (AUv2 .component, issue #5:
+# uses Apple's system AudioUnit/CoreAudioKit frameworks, no extra SDK to fetch).
 if(WIN32)
     set(RVC_FORMATS_DEFAULT VST2 VST3)
 else()
-    set(RVC_FORMATS_DEFAULT APP)
+    set(RVC_FORMATS_DEFAULT APP AU)
 endif()
 set(RVC_FORMATS "${RVC_FORMATS_DEFAULT}" CACHE STRING "iPlug2 plugin formats to build for this platform")
 

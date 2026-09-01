@@ -33,6 +33,14 @@
 #define VST3_SUBCATEGORY "Fx"
 #define ROBOTO_FN "Roboto-Regular.ttf"
 
+// AUv2 (.component) target, issue #5. factoryFunction/NSPrincipalClass in
+// resources/RVCRealtime-AU-Info.plist must match these symbol names exactly.
+#define AUV2_ENTRY RVCRealtime_Entry
+#define AUV2_ENTRY_STR "RVCRealtime_Entry"
+#define AUV2_FACTORY RVCRealtime_Factory
+#define AUV2_VIEW_CLASS RVCRealtime_View
+#define AUV2_VIEW_CLASS_STR "RVCRealtime_View"
+
 // Required by iPlug2's APP (standalone) host, used for the macOS human GUI
 // check ahead of the real AU target (issue #5).
 #define APP_NUM_CHANNELS 2

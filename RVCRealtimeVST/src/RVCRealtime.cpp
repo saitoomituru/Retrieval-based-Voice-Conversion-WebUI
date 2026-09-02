@@ -103,6 +103,29 @@ std::string ParentDirectory(const std::string& filePath)
   return separator == std::string::npos ? std::string() : filePath.substr(0, separator);
 }
 
+// Issue #15: the Windows RVC package bundles a portable interpreter at
+// <root>/runtime/python.exe; the macOS dev setup in
+// docs/macos-runtime-bootstrap.ja.md instead creates <root>/.venv. Neither guess
+// applies on the other platform, so this branches instead of picking one path.
+const char* PythonNotFoundMessage()
+{
+#if defined(_WIN32)
+  return "runtime/python.exe not found; select Python manually.";
+#else
+  return ".venv/bin/python not found; select Python manually.";
+#endif
+}
+
+std::string DetectPythonPath(const std::string& root)
+{
+#if defined(_WIN32)
+  const std::string candidate = JoinPath(root, "runtime/python.exe");
+#else
+  const std::string candidate = JoinPath(root, ".venv/bin/python");
+#endif
+  return PathIsFile(candidate) ? candidate : std::string();
+}
+
 // Windows-only check (PE header via GetBinaryTypeW); RVC's runtime/python.exe
 // convention doesn't exist outside Windows, so this only guards the Windows path.
 bool Is64BitExecutable(const std::string& path)
@@ -180,8 +203,8 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
 
   LoadUserConfiguration();
   if (mPythonPath.GetLength() == 0 && mRvcRoot.GetLength() > 0) {
-    const std::string detected = JoinPath(mRvcRoot.Get(), "runtime/python.exe");
-    if (PathIsFile(detected))
+    const std::string detected = DetectPythonPath(mRvcRoot.Get());
+    if (!detected.empty())
       mPythonPath.Set(detected.c_str());
   }
   const std::string modelDirectory = ParentDirectory(mModelPath.Get());
@@ -569,15 +592,15 @@ void RVCRealtime::ChooseIndex(IGraphics* graphics)
 void RVCRealtime::SetRvcRoot(const char* path)
 {
   const std::string root = TrimTrailingSeparators(path != nullptr ? path : "");
-  const std::string detectedPython = JoinPath(root, "runtime/python.exe");
-  const bool pythonDetected = PathIsFile(detectedPython);
+  const std::string detectedPython = DetectPythonPath(root);
+  const bool pythonDetected = !detectedPython.empty();
   {
     std::lock_guard<std::mutex> lock(mStateMutex);
     mRvcRoot.Set(root.c_str());
     mPythonPath.Set(pythonDetected ? detectedPython.c_str() : "");
     mModelBrowseDirectory.Set(root.c_str());
     mIndexBrowseDirectory.Set(root.c_str());
-    mValidationMessage.Set(pythonDetected ? "" : "runtime\\python.exe not found; select Python manually.");
+    mValidationMessage.Set(pythonDetected ? "" : PythonNotFoundMessage());
   }
   mWorker.setPath(rvc::kStateRvcRoot, root.c_str());
   mWorker.setPath(rvc::kStatePythonPath, pythonDetected ? detectedPython.c_str() : "");
@@ -641,9 +664,9 @@ bool RVCRealtime::ValidateConfiguration(std::string& error) const
   }
   if (root.empty()) { error = "Select the RVC package root."; return false; }
   if (!PathIsDirectory(root)) { error = "RVC root folder does not exist."; return false; }
-  if (!PathIsFile(JoinPath(root, "infer/rtrvc.py"))) { error = "RVC source not found: infer\\rtrvc.py."; return false; }
-  if (!PathIsFile(JoinPath(root, "configs/config.py"))) { error = "RVC source not found: configs\\config.py."; return false; }
-  if (python.empty()) { error = "runtime\\python.exe not found; select Python manually."; return false; }
+  if (!PathIsFile(JoinPath(root, "infer/rtrvc.py"))) { error = "RVC source not found: infer/rtrvc.py."; return false; }
+  if (!PathIsFile(JoinPath(root, "configs/config.py"))) { error = "RVC source not found: configs/config.py."; return false; }
+  if (python.empty()) { error = PythonNotFoundMessage(); return false; }
   if (!PathIsFile(python)) { error = "Selected Python executable does not exist."; return false; }
   if (!Is64BitExecutable(python)) { error = "Selected Python must be a 64-bit executable."; return false; }
   if (model.empty()) { error = "Select an RVC .pth model."; return false; }

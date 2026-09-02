@@ -220,12 +220,17 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
     graphics->AttachControl(new ITextControl(IRECT(560, 42, 750, 66), "0 ms / 0 drop",
                                               IText(12.f, IColor(255, 100, 104, 105), "Roboto-Regular", EAlign::Far)), kCtrlPerformance);
 
-    // Issue #14: REALTIME/BAKE indicator. Click toggles the manual override; the
-    // label also auto-follows the host's GetRenderingOffline() state (OnIdle()).
-    graphics->AttachControl(new IVButtonControl(IRECT(430, 16, 545, 42),
+    // Issue #14: REALTIME/BAKE indicator. The button's own label is static (never
+    // rewritten per-frame — a prior version called SetLabelStr() from OnIdle() and
+    // froze/blanked out on a real host, see experiments/20260902-1922__*.ja.md).
+    // The adjacent ITextControl mirrors kCtrlStatus/kCtrlPerformance below: a plain
+    // SetStr() every OnIdle() tick, the pattern already proven stable in GarageBand.
+    graphics->AttachControl(new IVButtonControl(IRECT(430, 16, 490, 42),
         [this](IControl*) { mForceBakeMode.store(!mForceBakeMode.load()); },
-        "REALTIME", style.WithLabelText(IText(13.f, kText, "Roboto-Regular", EAlign::Center)), true),
-        kCtrlRenderMode);
+        "MODE", style.WithLabelText(IText(11.f, kText, "Roboto-Regular", EAlign::Center)), true));
+    graphics->AttachControl(new ITextControl(IRECT(495, 16, 555, 42), "REALTIME",
+                                              IText(11.f, kMuted, "Roboto-Regular", EAlign::Near)),
+                                              kCtrlRenderMode);
 
     // Runtime and model paths
     auto attachFileRow = [&](const float y, const char* label, const int textTag, const PathRow pathRow) {
@@ -438,7 +443,7 @@ void RVCRealtime::OnIdle()
     performance->As<ITextControl>()->SetStrFmt(80, "%.0f ms / %.0f drop", mWorker.inferMs(), mWorker.droppedBlocks());
   if (auto* renderMode = GetUI()->GetControlWithTag(kCtrlRenderMode)) {
     const bool baking = GetRenderingOffline() || mForceBakeMode.load(std::memory_order_relaxed);
-    renderMode->As<IVButtonControl>()->SetLabelStr(baking ? "BAKE" : "REALTIME");
+    renderMode->As<ITextControl>()->SetStr(baking ? "BAKE" : "REALTIME");
   }
 #endif
 }

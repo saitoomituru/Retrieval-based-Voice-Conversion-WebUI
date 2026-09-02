@@ -44,6 +44,7 @@ python -m train.train -e deltamon_singing_40k_v2_20260901 -sr 40k -f0 1 -bs 1 -t
 - epoch 20は2026-09-02 07:19:58に完了し、G/D checkpoint保存に成功。
 - 推論用weightを抽出後、CPU/RMVPE/indexなしで`村祭りボイス_RVC入力.wav`を変換。特徴26.14秒、F0 24.40秒、合成187.08秒。
 - 人間試聴で、声質・古語訛り・ビブラート・しゃくりに重大なNGなし。小ゲインのため軽いコンプと-0.1 dBFS付近のpeak補正版を別出力。
+- 開発者によるDAW配置・マスター後の耳チェックでも、楽曲としての重大なNGなし。以降の受容性は開発者判定と混同せず、ファン／第三者の試聴フィードバックで確認する。
 
 ## 失敗とRecovery
 
@@ -63,7 +64,7 @@ python -m train.train -e deltamon_singing_40k_v2_20260901 -sr 40k -f0 1 -bs 1 -t
 ## Recovery / 次の一手
 
 1. index生成、AU結合、複数model選択は別Issueで扱う。
-2. 他者試聴による楽曲単位のフィードバックを受け付ける。
+2. 他者試聴による楽曲単位のフィードバックを受け付ける（ファン／第三者レビュー段階）。
 3. 音声・model・indexはAirDriveへ保管し、公開前に本家のupstream/再配布条件を確認する。
 
 ## unknown

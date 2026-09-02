@@ -36,7 +36,9 @@ enum EControlTags {
   kCtrlPythonPath,
   kCtrlModelName,
   kCtrlIndexName,
-  kCtrlRenderMode
+  kCtrlRenderMode,
+  kCtrlModelMenu,
+  kCtrlIndexMenu
 };
 
 using namespace iplug;
@@ -70,6 +72,7 @@ private:
   void SetModelPath(const char* path);
   void SetIndexPath(const char* path);
   void UpdateFileLabels();
+  void RescanFileMenus();
   void StopEngineForPathChange();
   bool ValidateConfiguration(std::string& error) const;
   void LoadUserConfiguration();

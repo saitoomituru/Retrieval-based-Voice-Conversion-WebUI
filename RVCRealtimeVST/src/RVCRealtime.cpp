@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -183,6 +184,65 @@ const char* StatusName(const int status)
   }
 }
 
+// Issue #16: a small "\xE2\x96\xBE" (▾) button that scans one directory (non-recursive,
+// matching webui.py's os.listdir(weight_root)/os.listdir(index_root) behavior) and
+// shows a popup menu of matching files. Selecting one calls back into
+// SetModelPath/SetIndexPath, same as the existing manual "..." browse button.
+// Empty/missing directory just means the menu has 0 items and does nothing on click
+// (never throws, never blocks) — manual browse remains available either way.
+class RVCFileMenuControl final : public IDirBrowseControlBase
+{
+public:
+  using SelectionFunc = std::function<void(const char*)>;
+
+  RVCFileMenuControl(const IRECT& bounds, const char* extension, SelectionFunc onSelect)
+  : IDirBrowseControlBase(bounds, extension, /*showFileExtensions=*/true, /*scanRecursively=*/false)
+  , mOnSelect(std::move(onSelect))
+  {
+  }
+
+  void Draw(IGraphics& g) override
+  {
+    g.FillRect(kPanel, mRECT);
+    g.DrawText(IText(14.f, kText, "Roboto-Regular", EAlign::Center), "\xE2\x96\xBE", mRECT);
+  }
+
+  void OnMouseDown(float /*x*/, float /*y*/, const IMouseMod& /*mod*/) override
+  {
+    if (NItems() > 0)
+      GetUI()->CreatePopupMenu(*this, mMainMenu, mRECT);
+    SetDirty(false);
+  }
+
+  void OnPopupMenuSelection(IPopupMenu* pMenu, int /*valIdx*/) override
+  {
+    if (pMenu) {
+      if (auto* item = pMenu->GetChosenItem()) {
+        mSelectedItemIndex = mItems.Find(item);
+        CheckSelectedItem();
+        WDL_String path;
+        GetSelectedFile(path);
+        if (path.GetLength() > 0 && mOnSelect)
+          mOnSelect(path.Get());
+      }
+    }
+    SetDirty(false);
+  }
+
+  // Re-points the scan at `directory` (e.g. after RVC ROOT changes). Safe to call
+  // with a missing/empty directory: AddPath/SetupMenu just yield an empty menu.
+  void Rescan(const char* directory)
+  {
+    ClearPathList();
+    if (directory != nullptr && *directory != '\0')
+      AddPath(directory, "");
+    SetupMenu();
+  }
+
+private:
+  SelectionFunc mOnSelect;
+};
+
 } // namespace
 
 RVCRealtime::RVCRealtime(const InstanceInfo& info)
@@ -257,12 +317,16 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
         [this](IControl*) { mForceBakeMode.store(!mForceBakeMode.load()); },
         "", style, "REALTIME", "BAKE"), kCtrlRenderMode);
 
-    // Runtime and model paths
+    // Runtime and model paths. MODEL/INDEX additionally get a "\xE2\x96\xBE" scan
+    // button (issue #16: port webui.py's directory-scan model list) to the left of
+    // the panel end, so the panel/text area is a little narrower on those two rows.
     auto attachFileRow = [&](const float y, const char* label, const int textTag, const PathRow pathRow) {
       const float rowHeight = 36.f;
+      const bool hasMenu = pathRow == PathRow::Model || pathRow == PathRow::Index;
+      const float panelRight = hasMenu ? 654.f : 692.f;
       graphics->AttachControl(new ITextControl(IRECT(30, y, 92, y + rowHeight), label,
                                                 IText(13.f, kMuted, "Roboto-Regular", EAlign::Near)));
-      graphics->AttachControl(new IPanelControl(IRECT(96, y, 692, y + rowHeight), kPanel));
+      graphics->AttachControl(new IPanelControl(IRECT(96, y, panelRight, y + rowHeight), kPanel));
       const char* initial = "";
       switch (pathRow) {
         case PathRow::RvcRoot: initial = mRvcRoot.Get(); break;
@@ -270,8 +334,15 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
         case PathRow::Model: initial = mModelPath.get_filepart(); break;
         case PathRow::Index: initial = mIndexPath.get_filepart(); break;
       }
-      graphics->AttachControl(new ITextControl(IRECT(110, y, 680, y + rowHeight), initial,
+      graphics->AttachControl(new ITextControl(IRECT(110, y, panelRight - 12.f, y + rowHeight), initial,
                                                 IText(12.f, kText, "Roboto-Regular", EAlign::Near)), textTag);
+      if (pathRow == PathRow::Model) {
+        graphics->AttachControl(new RVCFileMenuControl(IRECT(658, y, 694, y + rowHeight), "pth",
+            [this](const char* path) { SetModelPath(path); }), kCtrlModelMenu);
+      } else if (pathRow == PathRow::Index) {
+        graphics->AttachControl(new RVCFileMenuControl(IRECT(658, y, 694, y + rowHeight), "index",
+            [this](const char* path) { SetIndexPath(path); }), kCtrlIndexMenu);
+      }
       auto action = [this, graphics, pathRow](IControl*) {
         switch (pathRow) {
           case PathRow::RvcRoot: ChooseRvcRoot(graphics); break;
@@ -727,5 +798,22 @@ void RVCRealtime::UpdateFileLabels()
     model->As<ITextControl>()->SetStr(mModelPath.get_filepart());
   if (auto* index = GetUI()->GetControlWithTag(kCtrlIndexName))
     index->As<ITextControl>()->SetStr(mIndexPath.get_filepart());
+  RescanFileMenus(); // caller (here) already holds mStateMutex; see declaration comment
+#endif
+}
+
+// Issue #16: re-point the MODEL/INDEX scan menus at <rvcRoot>/assets/weights and
+// <rvcRoot>/assets/indices (the same relative layout webui.py's weight_root/
+// outside_index_root scan) whenever a tracked path changes. Only ever called from
+// UpdateFileLabels(), which already holds mStateMutex while reading mRvcRoot here.
+void RVCRealtime::RescanFileMenus()
+{
+#if IPLUG_EDITOR
+  const std::string weightsDir = JoinPath(mRvcRoot.Get(), "assets/weights");
+  const std::string indicesDir = JoinPath(mRvcRoot.Get(), "assets/indices");
+  if (auto* modelMenu = GetUI()->GetControlWithTag(kCtrlModelMenu))
+    modelMenu->As<RVCFileMenuControl>()->Rescan(weightsDir.c_str());
+  if (auto* indexMenu = GetUI()->GetControlWithTag(kCtrlIndexMenu))
+    indexMenu->As<RVCFileMenuControl>()->Rescan(indicesDir.c_str());
 #endif
 }

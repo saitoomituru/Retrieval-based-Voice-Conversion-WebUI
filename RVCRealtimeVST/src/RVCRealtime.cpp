@@ -243,17 +243,19 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
     graphics->AttachControl(new ITextControl(IRECT(560, 42, 750, 66), "0 ms / 0 drop",
                                               IText(12.f, IColor(255, 100, 104, 105), "Roboto-Regular", EAlign::Far)), kCtrlPerformance);
 
-    // Issue #14: REALTIME/BAKE indicator. The button's own label is static (never
-    // rewritten per-frame — a prior version called SetLabelStr() from OnIdle() and
-    // froze/blanked out on a real host, see experiments/20260902-1922__*.ja.md).
-    // The adjacent ITextControl mirrors kCtrlStatus/kCtrlPerformance below: a plain
-    // SetStr() every OnIdle() tick, the pattern already proven stable in GarageBand.
-    graphics->AttachControl(new IVButtonControl(IRECT(430, 16, 490, 42),
+    // Issue #14: REALTIME/BAKE indicator.
+    // v1 used SetLabelStr() on an IVButtonControl from OnIdle() -> froze/blanked out
+    // on a real host (experiments/20260902-1922__*.ja.md).
+    // v2 used IVButtonControl (IButtonControlBase), which is a momentary control:
+    // OnMouseDown() sets GetValue()=1, then auto-animates back to 0 -> after the
+    // first click it visually looks permanently "off" (the reported "stays gray"
+    // bug), since a momentary button never holds an on-state on its own.
+    // IVToggleControl (ISwitchControlBase) is the persistent two-state control
+    // already proven stable here as the ENGINE toggle; SetValue() below drives its
+    // on/off look directly, no auto-reset animation involved.
+    graphics->AttachControl(new IVToggleControl(IRECT(430, 16, 555, 42),
         [this](IControl*) { mForceBakeMode.store(!mForceBakeMode.load()); },
-        "MODE", style.WithLabelText(IText(11.f, kText, "Roboto-Regular", EAlign::Center)), true));
-    graphics->AttachControl(new ITextControl(IRECT(495, 16, 555, 42), "REALTIME",
-                                              IText(11.f, kMuted, "Roboto-Regular", EAlign::Near)),
-                                              kCtrlRenderMode);
+        "", style, "REALTIME", "BAKE"), kCtrlRenderMode);
 
     // Runtime and model paths
     auto attachFileRow = [&](const float y, const char* label, const int textTag, const PathRow pathRow) {
@@ -466,7 +468,11 @@ void RVCRealtime::OnIdle()
     performance->As<ITextControl>()->SetStrFmt(80, "%.0f ms / %.0f drop", mWorker.inferMs(), mWorker.droppedBlocks());
   if (auto* renderMode = GetUI()->GetControlWithTag(kCtrlRenderMode)) {
     const bool baking = GetRenderingOffline() || mForceBakeMode.load(std::memory_order_relaxed);
-    renderMode->As<ITextControl>()->SetStr(baking ? "BAKE" : "REALTIME");
+    const double targetValue = baking ? 1.0 : 0.0;
+    if (renderMode->GetValue() != targetValue) {
+      renderMode->SetValue(targetValue);
+      renderMode->SetDirty(false);
+    }
   }
 #endif
 }

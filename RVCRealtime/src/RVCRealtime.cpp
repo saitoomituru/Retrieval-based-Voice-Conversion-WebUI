@@ -28,10 +28,32 @@ const IColor kAmber = IColor(255, 230, 160, 48);
 
 enum class PathRow { RvcRoot, Python, Model, Index };
 
-// Plain `Key=Value` text file, one setting per line. Deliberately not the Win32 INI
-// API (GetPrivateProfileStringW/WritePrivateProfileStringW), which does not exist
-// outside Windows: iplug::INIPath() already resolves a platform-correct settings
-// directory (AppData on Windows, Application Support on macOS).
+#if defined(_WIN32)
+std::wstring SettingsFilePath(const bool createDirectory)
+{
+  WDL_String directory;
+  iplug::INIPath(directory, BUNDLE_NAME);
+  const UTF8AsUTF16 directoryWide(directory.Get());
+  if (createDirectory)
+    CreateDirectoryW(directoryWide.Get(), nullptr);
+  std::wstring result(directoryWide.Get());
+  result += L"\\settings.ini";
+  return result;
+}
+
+std::string ReadSetting(const wchar_t* key)
+{
+  const std::wstring settingsPath = SettingsFilePath(false);
+  std::vector<wchar_t> value(32768, L'\0');
+  GetPrivateProfileStringW(L"Paths", key, L"", value.data(), static_cast<DWORD>(value.size()), settingsPath.c_str());
+  return UTF16AsUTF8(value.data()).Get();
+}
+
+void WriteSetting(const std::wstring& settingsPath, const wchar_t* key, const std::string& value)
+{
+  WritePrivateProfileStringW(L"Paths", key, UTF8AsUTF16(value.c_str()).Get(), settingsPath.c_str());
+}
+#else
 std::filesystem::path SettingsFilePath(const bool createDirectory)
 {
   WDL_String directory;
@@ -63,21 +85,32 @@ void WriteSetting(std::ofstream& file, const char* key, const std::string& value
 {
   file << key << "=" << value << "\n";
 }
+#endif
 
 bool PathIsFile(const std::string& path)
 {
   if (path.empty())
     return false;
+#if defined(_WIN32)
+  const DWORD attributes = GetFileAttributesW(UTF8AsUTF16(path.c_str()).Get());
+  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
   std::error_code ec;
   return std::filesystem::is_regular_file(path, ec);
+#endif
 }
 
 bool PathIsDirectory(const std::string& path)
 {
   if (path.empty())
     return false;
+#if defined(_WIN32)
+  const DWORD attributes = GetFileAttributesW(UTF8AsUTF16(path.c_str()).Get());
+  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
   std::error_code ec;
   return std::filesystem::is_directory(path, ec);
+#endif
 }
 
 std::string TrimTrailingSeparators(std::string path)
@@ -87,15 +120,20 @@ std::string TrimTrailingSeparators(std::string path)
   return path;
 }
 
-// `relative` is always written with '/' at call sites; std::filesystem accepts '/'
-// as a directory separator on Windows too and renders the platform-native form.
 std::string JoinPath(const std::string& root, const char* relative)
 {
   if (root.empty())
     return {};
+#if defined(_WIN32)
+  std::string result = TrimTrailingSeparators(root);
+  result += "\\";
+  result += relative;
+  return result;
+#else
   std::filesystem::path path(TrimTrailingSeparators(root));
   path /= relative;
   return path.string();
+#endif
 }
 
 std::string ParentDirectory(const std::string& filePath)
@@ -190,6 +228,7 @@ const char* StatusName(const int status)
 // SetModelPath/SetIndexPath, same as the existing manual "..." browse button.
 // Empty/missing directory just means the menu has 0 items and does nothing on click
 // (never throws, never blocks) — manual browse remains available either way.
+#if defined(__APPLE__)
 class RVCFileMenuControl final : public IDirBrowseControlBase
 {
 public:
@@ -242,6 +281,7 @@ public:
 private:
   SelectionFunc mOnSelect;
 };
+#endif
 
 } // namespace
 
@@ -320,16 +360,23 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
     // IVToggleControl (ISwitchControlBase) is the persistent two-state control
     // already proven stable here as the ENGINE toggle; SetValue() below drives its
     // on/off look directly, no auto-reset animation involved.
+#if defined(__APPLE__)
     graphics->AttachControl(new IVToggleControl(IRECT(430, 16, 555, 42),
         [this](IControl*) { mForceBakeMode.store(!mForceBakeMode.load()); },
         "", style, "REALTIME", "BAKE"), kCtrlRenderMode);
+#endif
 
     // Runtime and model paths. MODEL/INDEX additionally get a "\xE2\x96\xBE" scan
     // button (issue #16: port webui.py's directory-scan model list) to the left of
     // the panel end, so the panel/text area is a little narrower on those two rows.
     auto attachFileRow = [&](const float y, const char* label, const int textTag, const PathRow pathRow) {
       const float rowHeight = 36.f;
-      const bool hasMenu = pathRow == PathRow::Model || pathRow == PathRow::Index;
+      const bool hasMenu =
+#if defined(__APPLE__)
+        pathRow == PathRow::Model || pathRow == PathRow::Index;
+#else
+        false;
+#endif
       const float panelRight = hasMenu ? 654.f : 692.f;
       graphics->AttachControl(new ITextControl(IRECT(30, y, 92, y + rowHeight), label,
                                                 IText(13.f, kMuted, "Roboto-Regular", EAlign::Near)));
@@ -343,6 +390,7 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
       }
       graphics->AttachControl(new ITextControl(IRECT(110, y, panelRight - 12.f, y + rowHeight), initial,
                                                 IText(12.f, kText, "Roboto-Regular", EAlign::Near)), textTag);
+#if defined(__APPLE__)
       if (pathRow == PathRow::Model) {
         graphics->AttachControl(new RVCFileMenuControl(IRECT(658, y, 694, y + rowHeight), "pth",
             [this](const char* path) { SetModelPath(path); }), kCtrlModelMenu);
@@ -350,6 +398,7 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
         graphics->AttachControl(new RVCFileMenuControl(IRECT(658, y, 694, y + rowHeight), "index",
             [this](const char* path) { SetIndexPath(path); }), kCtrlIndexMenu);
       }
+#endif
       auto action = [this, graphics, pathRow](IControl*) {
         switch (pathRow) {
           case PathRow::RvcRoot: ChooseRvcRoot(graphics); break;
@@ -544,6 +593,7 @@ void RVCRealtime::OnIdle()
     detail->As<ITextControl>()->SetStr(validationMessage.empty() ? mWorker.statusText().c_str() : validationMessage.c_str());
   if (auto* performance = GetUI()->GetControlWithTag(kCtrlPerformance))
     performance->As<ITextControl>()->SetStrFmt(80, "%.0f ms / %.0f drop", mWorker.inferMs(), mWorker.droppedBlocks());
+#if defined(__APPLE__)
   if (auto* renderMode = GetUI()->GetControlWithTag(kCtrlRenderMode)) {
     const bool baking = GetRenderingOffline() || mForceBakeMode.load(std::memory_order_relaxed);
     const double targetValue = baking ? 1.0 : 0.0;
@@ -552,6 +602,7 @@ void RVCRealtime::OnIdle()
       renderMode->SetDirty(false);
     }
   }
+#endif
 #endif
 }
 
@@ -771,10 +822,17 @@ bool RVCRealtime::ValidateConfiguration(std::string& error) const
 
 void RVCRealtime::LoadUserConfiguration()
 {
+#if defined(_WIN32)
+  const std::string root = ReadSetting(L"RvcRoot");
+  const std::string python = ReadSetting(L"PythonPath");
+  const std::string model = ReadSetting(L"ModelPath");
+  const std::string index = ReadSetting(L"IndexPath");
+#else
   const std::string root = ReadSetting("RvcRoot");
   const std::string python = ReadSetting("PythonPath");
   const std::string model = ReadSetting("ModelPath");
   const std::string index = ReadSetting("IndexPath");
+#endif
   if (!root.empty()) mRvcRoot.Set(root.c_str());
   if (!python.empty()) mPythonPath.Set(python.c_str());
   if (!model.empty()) mModelPath.Set(model.c_str());
@@ -791,6 +849,13 @@ void RVCRealtime::SaveUserConfiguration() const
     model = mModelPath.Get();
     index = mIndexPath.Get();
   }
+#if defined(_WIN32)
+  const std::wstring settingsPath = SettingsFilePath(true);
+  WriteSetting(settingsPath, L"RvcRoot", root);
+  WriteSetting(settingsPath, L"PythonPath", python);
+  WriteSetting(settingsPath, L"ModelPath", model);
+  WriteSetting(settingsPath, L"IndexPath", index);
+#else
   std::ofstream file(SettingsFilePath(true), std::ios::trunc);
   if (!file.is_open())
     return;
@@ -798,6 +863,7 @@ void RVCRealtime::SaveUserConfiguration() const
   WriteSetting(file, "PythonPath", python);
   WriteSetting(file, "ModelPath", model);
   WriteSetting(file, "IndexPath", index);
+#endif
 }
 
 void RVCRealtime::UpdateFileLabels()
@@ -814,7 +880,9 @@ void RVCRealtime::UpdateFileLabels()
     model->As<ITextControl>()->SetStr(mModelPath.get_filepart());
   if (auto* index = GetUI()->GetControlWithTag(kCtrlIndexName))
     index->As<ITextControl>()->SetStr(mIndexPath.get_filepart());
+#if defined(__APPLE__)
   RescanFileMenus(); // caller (here) already holds mStateMutex; see declaration comment
+#endif
 #endif
 }
 
@@ -822,6 +890,7 @@ void RVCRealtime::UpdateFileLabels()
 // <rvcRoot>/assets/indices (the same relative layout webui.py's weight_root/
 // outside_index_root scan) whenever a tracked path changes. Only ever called from
 // UpdateFileLabels(), which already holds mStateMutex while reading mRvcRoot here.
+#if defined(__APPLE__)
 void RVCRealtime::RescanFileMenus()
 {
 #if IPLUG_EDITOR
@@ -833,3 +902,4 @@ void RVCRealtime::RescanFileMenus()
     indexMenu->As<RVCFileMenuControl>()->Rescan(indicesDir.c_str());
 #endif
 }
+#endif

@@ -3,7 +3,9 @@ import shutil
 import html
 import copy
 import re
+import sys
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings(
     "ignore",
@@ -91,11 +93,16 @@ import socket
 import subprocess
 import time
 
+from rvc_runtime_supervisor import RvcRuntimeSupervisor
+
 
 logging.getLogger("numba").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+rvc_runtime_supervisor = RvcRuntimeSupervisor(
+    Path(now_dir), python_executable=sys.executable
+)
 
 
 def find_available_port(start_port, host="0.0.0.0"):
@@ -255,6 +262,37 @@ def normalize_index_path(file_index):
         .strip(" ")
         .replace("trained", "added")
     )
+
+
+def rvc_runtime_status():
+    return rvc_runtime_supervisor.status_text()
+
+
+def configure_rvc_runtime(model_name, file_index):
+    model_name = str(model_name or "").strip()
+    if not model_name:
+        return "ERROR | AUへ適用する推理音色を選択してください"
+    model_path = (Path(weight_root) / model_name).resolve()
+    if not model_path.is_file():
+        return f"ERROR | modelが見つかりません: {model_path}"
+    index_path = normalize_index_path(file_index)
+    if index_path and not Path(index_path).is_file():
+        return f"ERROR | indexが見つかりません: {index_path}"
+
+    runtime_config = {
+        "rvc_root": str(Path(now_dir).resolve()),
+        "model_path": str(model_path),
+        "index_path": str(Path(index_path).resolve()) if index_path else "",
+    }
+    config_path = Path(tmp) / "rvc-runtime-engine.json"
+    pending_path = config_path.with_suffix(".json.tmp")
+    pending_path.write_text(
+        json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    pending_path.replace(config_path)
+    rvc_runtime_supervisor.configure_engine(config_path)
+    return rvc_runtime_supervisor.status_text()
 
 
 def report_missing_index(file_index):
@@ -1872,6 +1910,22 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                 clean_button.click(
                     fn=clean, inputs=[], outputs=[sid0], api_name="infer_clean"
                 )
+            with gr.Row():
+                runtime_status = gr.Textbox(
+                    label="AU / RVC runtime",
+                    value="WebUI起動時にlocalhost runnerを確認します",
+                    interactive=False,
+                    scale=4,
+                )
+                runtime_refresh = gr.Button("runtime状態を更新", scale=1)
+                runtime_apply = gr.Button("選択音色をAUへ適用", variant="primary", scale=1)
+                runtime_refresh.click(
+                    fn=rvc_runtime_status,
+                    inputs=[],
+                    outputs=[runtime_status],
+                    queue=False,
+                    api_name="rvc_runtime_health",
+                )
             with gr.TabItem(i18n("单次推理")):
                 with gr.Group():
                     with gr.Row():
@@ -1942,6 +1996,13 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                                 inputs=[],
                                 outputs=sid0,
                                 api_name="infer_refresh",
+                            )
+                            runtime_apply.click(
+                                fn=configure_rvc_runtime,
+                                inputs=[sid0, file_index1],
+                                outputs=[runtime_status],
+                                queue=False,
+                                api_name="rvc_runtime_configure",
                             )
                 with gr.Group():
                     with gr.Column():
@@ -2853,4 +2914,8 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
     if config.iscolab:
         app.queue(concurrency_count=511, max_size=1022).launch(share=True)
     else:
-        launch_webui_with_port_fallback(app, config)
+        rvc_runtime_supervisor.start()
+        try:
+            launch_webui_with_port_fallback(app, config)
+        finally:
+            rvc_runtime_supervisor.stop()

@@ -33,6 +33,7 @@ Issue #1 / #20 / #21 / #24 / #25 / #28 / #30 / #31 / #32に対し、論理servic
 9. model適用後もlistenは`127.0.0.1:17865`だけで、旧port `17864`は開かなかった。生成設定`TEMP/rvc-runtime-engine.json`にはroot、asset、modelの絶対pathが書かれ、repositoryへ入らないようgitignoreした。
 10. WebUI所有runnerへC++ thin headを接続して再度1 block変換し、非zero出力とdrop 0を確認した。
 11. build済みcomponentと配備先binaryのSHA-256が一致し、`codesign --verify --deep --strict`と`auval -v aufx Rvcr Rvcp`が成功した。
+12. protocol、engine config、runtime session、supervisorの`unittest` 17件が成功した。sandbox内ではlocalhost bind禁止により1件だけ環境エラーとなったため、同一suiteを許可されたlocalhost環境で再実行して17/17成功を確認した。
 
 ## 実model結果
 

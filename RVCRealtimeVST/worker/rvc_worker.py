@@ -13,6 +13,17 @@ import time
 import traceback
 from pathlib import Path
 
+# issue #3/#6: the Windows host (WorkerClient_win.cpp) signals new
+# requests/responses with named Events (WinEvent below). macOS has no
+# equivalent in the stdlib without an extra pip dependency (posix_ipc), so the
+# POSIX path polls the shared-memory sequence number instead of waiting on a
+# named semaphore/event. Both sides already tolerate short poll sleeps
+# elsewhere, and block sizes are >=20ms, so the added latency is negligible.
+# Shared memory itself uses multiprocessing.shared_memory (stdlib, POSIX
+# shm_open under the hood) instead of mmap's Windows-only tagname mode.
+IS_POSIX = sys.platform != "win32"
+POLL_INTERVAL_S = 0.001
+
 MAGIC = 0x50564352
 PROTOCOL_VERSION = 1
 HEADER_BYTES = 4096
@@ -43,12 +54,15 @@ def read_value(shared: mmap.mmap, offset: int, fmt: str):
     return struct.unpack_from("<" + fmt, shared, offset)[0]
 
 
-def write_status(shared: mmap.mmap, state: int, message: str) -> None:
+def write_status(shared, state: int, message: str) -> None:
     write_value(shared, 8, "i", state)
     encoded = message.encode("utf-8", errors="replace")[: STATUS_TEXT_BYTES - 1]
     shared[STATUS_TEXT_OFFSET : STATUS_TEXT_OFFSET + STATUS_TEXT_BYTES] = b"\0" * STATUS_TEXT_BYTES
     shared[STATUS_TEXT_OFFSET : STATUS_TEXT_OFFSET + len(encoded)] = encoded
-    shared.flush()
+    # memoryview (POSIX shared_memory.buf) has no flush(); POSIX shared memory
+    # pages are visible to other processes immediately, no explicit sync needed.
+    if hasattr(shared, "flush"):
+        shared.flush()
 
 
 class WinEvent:
@@ -80,6 +94,33 @@ class WinEvent:
         if self.handle:
             self._close(self.handle)
             self.handle = None
+
+
+class PosixSequenceWaiter:
+    """Polling stand-in for WinEvent on macOS/Linux: waits for the 4-byte field
+    at `offset` in shared memory to change from its last-seen value, instead of
+    a named OS event/semaphore. See the IS_POSIX comment near the top."""
+
+    def __init__(self, shared, offset: int):
+        self._shared = shared
+        self._offset = offset
+        self._last = read_value(shared, offset, "I")
+
+    def wait(self, timeout_ms: int) -> int:
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while time.monotonic() < deadline:
+            current = read_value(self._shared, self._offset, "I")
+            if current != self._last:
+                self._last = current
+                return WAIT_OBJECT_0
+            time.sleep(POLL_INTERVAL_S)
+        return WAIT_TIMEOUT
+
+    def set(self) -> None:
+        pass  # no-op: the reader polls the sequence value directly, nothing to signal
+
+    def close(self) -> None:
+        pass
 
 
 class RVCStreamEngine:
@@ -255,12 +296,23 @@ class RVCStreamEngine:
 
 def run(args: argparse.Namespace) -> int:
     shared = None
+    shm_handle = None
+    input_view = None
+    output_view = None
     request_event = None
     response_event = None
     try:
-        shared = mmap.mmap(-1, MAP_BYTES, tagname=args.map, access=mmap.ACCESS_WRITE)
-        request_event = WinEvent(args.request)
-        response_event = WinEvent(args.response)
+        if IS_POSIX:
+            from multiprocessing import shared_memory
+
+            shm_handle = shared_memory.SharedMemory(name=args.map, create=False)
+            shared = shm_handle.buf
+            request_event = PosixSequenceWaiter(shared, 12)  # host writes the request sequence here
+            response_event = PosixSequenceWaiter(shared, 16)  # unused: worker never waits on this
+        else:
+            shared = mmap.mmap(-1, MAP_BYTES, tagname=args.map, access=mmap.ACCESS_WRITE)
+            request_event = WinEvent(args.request)
+            response_event = WinEvent(args.response)
         if read_value(shared, 0, "I") != MAGIC or read_value(shared, 4, "I") != PROTOCOL_VERSION:
             raise RuntimeError("RVC VST protocol mismatch")
         write_status(shared, STATUS_LOADING, "Loading Python and CUDA")
@@ -328,15 +380,27 @@ def run(args: argparse.Namespace) -> int:
             request_event.close()
         if response_event is not None:
             response_event.close()
-        if shared is not None:
+        if shm_handle is not None:
+            # POSIX: numpy/struct views must release their buffer export before
+            # SharedMemory.close(), or it raises BufferError.
+            input_view = None
+            output_view = None
+            shared = None
+            try:
+                shm_handle.close()  # detach only; the host (creator) shm_unlink()s
+            except BufferError:
+                pass
+        elif shared is not None:
             shared.close()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--map", required=True)
-    parser.add_argument("--request", required=True)
-    parser.add_argument("--response", required=True)
+    # --request/--response name Windows named Events; unused on POSIX, which
+    # polls shared memory instead (see IS_POSIX / PosixSequenceWaiter above).
+    parser.add_argument("--request", required=not IS_POSIX)
+    parser.add_argument("--response", required=not IS_POSIX)
     parser.add_argument("--config", required=True)
     return parser.parse_args()
 

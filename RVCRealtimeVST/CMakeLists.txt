@@ -36,12 +36,15 @@ endif()
 include(${IPLUG2_DIR}/iPlug2.cmake)
 find_package(iPlug2 REQUIRED)
 
-# WorkerClient_win.cpp is the real IPC bridge (Windows only). Every other
-# platform links WorkerClient_stub_mac.cpp, a compile-only placeholder that
-# lets the UI build and run without a functioning worker — see
-# src/WorkerClient_stub_mac.cpp for what it deliberately does not do.
+# WorkerClient_win.cpp is the real Windows IPC bridge; WorkerClient_mac.cpp is
+# the real macOS/POSIX one (issue #3/#6, shm_open+mmap+posix_spawn, no named
+# events — see the file's own header comment). Any other platform (untested,
+# e.g. plain Linux) falls back to WorkerClient_stub_mac.cpp, the compile-only
+# placeholder that lets the UI build without a functioning worker.
 if(WIN32)
     set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_win.cpp)
+elseif(APPLE)
+    set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_mac.cpp)
 else()
     set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_stub_mac.cpp)
 endif()
@@ -59,11 +62,20 @@ if(WIN32)
     list(APPEND RVC_PLUGIN_SOURCES resources/main.rc)
 endif()
 
+# Ships worker/rvc_worker.py inside the macOS bundle's Contents/Resources/
+# (RESOURCES entries are copied flat, no subdirectory — WorkerClient_mac.cpp's
+# workerScriptPath() looks for it right there via BundleResourcePath). Windows
+# packaging copies the same file separately in scripts/build.ps1.
+set(RVC_PLUGIN_RESOURCES resources/fonts/Roboto-Regular.ttf)
+if(APPLE)
+    list(APPEND RVC_PLUGIN_RESOURCES worker/rvc_worker.py)
+endif()
+
 iplug_add_plugin(${PROJECT_NAME}
     SOURCES
         ${RVC_PLUGIN_SOURCES}
     RESOURCES
-        resources/fonts/Roboto-Regular.ttf
+        ${RVC_PLUGIN_RESOURCES}
     FORMATS
         ${RVC_FORMATS}
     UI IGRAPHICS
@@ -86,13 +98,15 @@ if(MSVC)
     endforeach()
 endif()
 
-if(RVC_BUILD_SMOKE_TEST AND WIN32)
-    # Both smoke tests below exercise the real Windows IPC bridge / VST2 compat
-    # shim, neither of which macOS has yet (RVC_WORKER_CLIENT_SOURCE is the stub
-    # there) — so this whole block is Windows-only.
+if(RVC_BUILD_SMOKE_TEST AND (WIN32 OR APPLE))
+    # rvc-worker-smoke exercises the real IPC bridge end-to-end (issue #3/#6) on
+    # whichever platform has one; it's meaningless against WorkerClient_stub_mac.
+    # It isn't a bundle, so WorkerClient_mac.cpp's BundleResourcePath lookup
+    # can't find rvc_worker.py here — point it at the source tree's copy via
+    # RVC_WORKER_SCRIPT (see workerScriptPath()'s override) when running it.
     add_executable(rvc-worker-smoke
         tools/worker_smoke.cpp
-        src/WorkerClient_win.cpp
+        ${RVC_WORKER_CLIENT_SOURCE}
         src/WorkerClient.hpp
         src/SpscRing.hpp
         src/RvcParameters.hpp
@@ -107,22 +121,36 @@ if(RVC_BUILD_SMOKE_TEST AND WIN32)
     if(MSVC)
         target_compile_options(rvc-worker-smoke PRIVATE /W4 /permissive- /utf-8)
     endif()
-    add_custom_command(TARGET rvc-worker-smoke POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:rvc-worker-smoke>/RVCRealtime.resources/worker"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/worker/rvc_worker.py"
-            "$<TARGET_FILE_DIR:rvc-worker-smoke>/RVCRealtime.resources/worker/rvc_worker.py")
+    if(APPLE)
+        # WorkerClient_mac.cpp includes IPlugPaths.h (BundleResourcePath is
+        # skipped at preprocessing time here since AU_API/APP_API aren't defined
+        # for this plain executable, but the header still needs to resolve).
+        target_include_directories(rvc-worker-smoke PRIVATE
+            "${IPLUG2_DIR}/IPlug"
+            "${IPLUG2_DIR}/WDL")
+    endif()
+    if(WIN32)
+        add_custom_command(TARGET rvc-worker-smoke POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:rvc-worker-smoke>/RVCRealtime.resources/worker"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/worker/rvc_worker.py"
+                "$<TARGET_FILE_DIR:rvc-worker-smoke>/RVCRealtime.resources/worker/rvc_worker.py")
+    endif()
 
-    add_executable(rvc-vst2-smoke tools/vst2_smoke.cpp)
-    target_include_directories(rvc-vst2-smoke PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst2-compat"
-        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst2sdk/include")
-    target_compile_definitions(rvc-vst2-smoke PRIVATE
-        UNICODE
-        _UNICODE
-        NOMINMAX)
-    if(MSVC)
-        target_compile_options(rvc-vst2-smoke PRIVATE /W4 /permissive- /utf-8)
+    # VST2 is a Windows-only legacy format for this fork; the compat shim under
+    # third_party/vst2-compat targets MSVC only, so keep this smoke test off macOS.
+    if(WIN32)
+        add_executable(rvc-vst2-smoke tools/vst2_smoke.cpp)
+        target_include_directories(rvc-vst2-smoke PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst2-compat"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst2sdk/include")
+        target_compile_definitions(rvc-vst2-smoke PRIVATE
+            UNICODE
+            _UNICODE
+            NOMINMAX)
+        if(MSVC)
+            target_compile_options(rvc-vst2-smoke PRIVATE /W4 /permissive- /utf-8)
+        endif()
     endif()
 endif()

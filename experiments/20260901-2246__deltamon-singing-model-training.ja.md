@@ -5,7 +5,7 @@
 対象 Issue: #8、#10、#11、#12、#13（関連: #6）
 branch / commit: `issue-6-macos-runtime-bootstrap` / `a41ab03`
 実行環境: macOS 15.7.7 / Intel x86_64 / Python 3.12.7 / CPU
-結果: running（前処理・特徴量準備はsuccess、model学習は継続中）
+結果: success（学習・CLI変換・人間試聴チェック完了。公開・再配布は未判定）
 
 ## 目的
 
@@ -19,6 +19,8 @@ AirDriveに保管した利用権限確認中のデルタもん公式学習音声
 - base: `assets/pretrained_v2/f0G40k.pth` / `f0D40k.pth`。重みはignore対象。
 - RVC mute素材: `.model-downloads/mute.zip` と `logs/mute`。ignore対象。
 - model/index/変換音声/学習中間物: `logs/` またはAirDriveに保持し、repositoryへ入れない。
+- 変換出力: `logs/deltamon_singing_40k_v2_20260901/muramatsuri_deltamon_e20.wav`
+- ゲイン補正版: `logs/deltamon_singing_40k_v2_20260901/muramatsuri_deltamon_e20_comp_norm.wav`
 
 ## 実行コマンド
 
@@ -39,7 +41,10 @@ python -m train.train -e deltamon_singing_40k_v2_20260901 -sr 40k -f0 1 -bs 1 -t
 - CPU single-process、DataLoader worker 0で学習epoch 1へ到達。
 - epoch 1は22:46:30に完了、所要24分58秒。
 - epoch 1の200 step時点: `loss_disc=4.673`, `loss_gen=2.436`, `loss_mel=24.602`, `loss_kl=3.730`。
-- 観測時点でPID 55307が生存し、CPU約565%で次epochを計算中。5 epoch保存指定のためcheckpointは未生成。
+- epoch 20は2026-09-02 07:19:58に完了し、G/D checkpoint保存に成功。
+- 推論用weightを抽出後、CPU/RMVPE/indexなしで`村祭りボイス_RVC入力.wav`を変換。特徴26.14秒、F0 24.40秒、合成187.08秒。
+- 人間試聴で、声質・古語訛り・ビブラート・しゃくりに重大なNGなし。小ゲインのため軽いコンプと-0.1 dBFS付近のpeak補正版を別出力。
+- 開発者によるDAW配置・マスター後の耳チェックでも、楽曲としての重大なNGなし。以降の受容性は開発者判定と混同せず、ファン／第三者の試聴フィードバックで確認する。
 
 ## 失敗とRecovery
 
@@ -58,15 +63,14 @@ python -m train.train -e deltamon_singing_40k_v2_20260901 -sr 40k -f0 1 -bs 1 -t
 
 ## Recovery / 次の一手
 
-1. PID 55307を維持し、5/10/15/20 epochのcheckpointとtrain.logを確認する。
-2. 学習完了後にindexを別processで生成する。
-3. `村祭りボイス_RVC入力.wav`を使った変換は、model/index存在確認後に別実験として記録する。
-4. 音声・model・indexはAirDriveへ保管し、公開前に本家のupstream/再配布条件を確認する。
+1. index生成、AU結合、複数model選択は別Issueで扱う。
+2. 他者試聴による楽曲単位のフィードバックを受け付ける（ファン／第三者レビュー段階）。
+3. 音声・model・indexはAirDriveへ保管し、公開前に本家のupstream/再配布条件を確認する。
 
 ## unknown
 
-- 20 epochの完了時刻と最終loss
-- checkpointの実体・index生成結果
-- 村祭りボイスの変換品質、F0追従、遅延、dropout
+- 最終lossの評価と長時間安定性
+- index生成結果、AU統合時の遅延・dropout
+- 他者環境での再現性と楽曲単位の受容性
 - Terminal crashの再現率
 - デルタもんmodelの公開・再配布・upstream許諾

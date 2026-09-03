@@ -40,7 +40,8 @@ audio thread 非blocking 条件との整合を確認する。
 
 - runtime protocol unit test: 8件 success
 - AU baseline build: success
-- localhost 実 port: 実行環境の bind/connect 隔離により blocked
+- localhost 実 port: OS のローカルネットワーク許可後、`GET /health` が
+  `{"service":"rvc-realtime","state":"READY","protocol_version":1}` を返して success
 - #27 stream client: not-implemented
 - 判定: **SEMANTIC-STOP**
 
@@ -55,6 +56,7 @@ audio thread 非blocking 条件との整合を確認する。
 
 ## unknown
 
-- GarageBand sandbox から `127.0.0.1:17865` が実際に許可されるか。
+- GarageBand sandbox から `127.0.0.1:17865` が実際に許可されるか。通常プロセスの
+  localhost bind/health は確認済みだが、GarageBand AU からの接続は未確認。
 - 実機 callback の `nFrames` と runtime RTT。
 - immutable model weights を session engine 間で安全に共有できる粒度。

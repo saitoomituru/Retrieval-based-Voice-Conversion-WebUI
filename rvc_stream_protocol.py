@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import sys
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Optional
@@ -91,6 +92,8 @@ def pack_audio(sample_rate: int, pcm, *, channels: int = 1, timestamp_ns: int = 
     values = array.array("f", pcm)
     if channels != 1:
         raise ValueError("RSVC v1 supports mono audio only")
+    if sys.byteorder != "little":
+        values.byteswap()
     return AUDIO_HEADER.pack(sample_rate, channels, 1, len(values), timestamp_ns, flags) + values.tobytes()
 
 

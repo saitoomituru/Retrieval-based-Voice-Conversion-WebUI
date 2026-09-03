@@ -54,6 +54,7 @@ private:
     bool processOneBlock();
     Paths pathsSnapshot() const;
     void setStatus(int status, const std::string& text);
+    void waitForAudioRingUsers() noexcept;
     uint32_t calculateBlockFrames() const noexcept;
     std::string writeWorkerConfig(const Paths& paths, std::string& error) const;
 
@@ -65,6 +66,7 @@ private:
     std::atomic<bool> enabled_ {false};
     std::atomic<bool> stopRequested_ {false};
     std::atomic<bool> ready_ {false};
+    std::atomic<uint32_t> audioRingUsers_ {0};
     std::atomic<int> status_ {kStatusOff};
     std::atomic<float> inferMs_ {0.0f};
     std::atomic<uint32_t> droppedBlocks_ {0};

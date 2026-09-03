@@ -383,19 +383,32 @@ void WorkerClient::setPath(const StateId id, const char* const value)
 
 std::size_t WorkerClient::pushInput(const float* const samples, const std::size_t count) noexcept
 {
-    if (!isReady())
+    if (!ready_.load(std::memory_order_seq_cst))
         return 0;
+    audioRingUsers_.fetch_add(1, std::memory_order_seq_cst);
+    if (!ready_.load(std::memory_order_seq_cst)) {
+        audioRingUsers_.fetch_sub(1, std::memory_order_seq_cst);
+        return 0;
+    }
     const std::size_t pushed = inputRing_.push(samples, count);
     if (pushed != count)
         droppedBlocks_.fetch_add(1, std::memory_order_relaxed);
+    audioRingUsers_.fetch_sub(1, std::memory_order_seq_cst);
     return pushed;
 }
 
 std::size_t WorkerClient::popOutput(float* const samples, const std::size_t count) noexcept
 {
-    if (!isReady())
+    if (!ready_.load(std::memory_order_seq_cst))
         return 0;
-    return outputRing_.pop(samples, count);
+    audioRingUsers_.fetch_add(1, std::memory_order_seq_cst);
+    if (!ready_.load(std::memory_order_seq_cst)) {
+        audioRingUsers_.fetch_sub(1, std::memory_order_seq_cst);
+        return 0;
+    }
+    const std::size_t popped = outputRing_.pop(samples, count);
+    audioRingUsers_.fetch_sub(1, std::memory_order_seq_cst);
+    return popped;
 }
 
 std::string WorkerClient::statusText() const
@@ -415,6 +428,15 @@ void WorkerClient::setStatus(const int status, const std::string& text)
     status_.store(status, std::memory_order_release);
     std::lock_guard<std::mutex> lock(statusTextMutex_);
     statusText_ = text;
+}
+
+void WorkerClient::waitForAudioRingUsers() noexcept
+{
+    // ready_ is false before this point. A callback that observed the prior
+    // generation either joined the count before this load or rechecks ready_
+    // after joining and leaves without touching either ring.
+    while (audioRingUsers_.load(std::memory_order_seq_cst) != 0)
+        std::this_thread::yield();
 }
 
 uint32_t WorkerClient::calculateBlockFrames() const noexcept
@@ -499,21 +521,21 @@ bool WorkerClient::launchWorker(const Paths& paths, const uint64_t)
     ipc_->nextHeartbeat = Clock::now() + std::chrono::seconds(1);
     ipc_->lastHeartbeatAck = Clock::now();
 
-    // Disconnect first clears ready_. Handshake time then lets any callback that
-    // observed the old generation finish before these unsafe cursor resets.
+    // Only the management thread waits. The audio callback never spins or locks.
+    waitForAudioRingUsers();
     inputRing_.resetUnsafe();
     outputRing_.resetUnsafe();
     outputRing_.pushZeros(latency);
     droppedBlocks_.store(0, std::memory_order_relaxed);
     inferMs_.store(0.0f, std::memory_order_relaxed);
     setStatus(kStatusReady, "RSVC 127.0.0.1:17865 session " + std::to_string(ipc_->sessionId));
-    ready_.store(true, std::memory_order_release);
+    ready_.store(true, std::memory_order_seq_cst);
     return true;
 }
 
 void WorkerClient::stopWorker()
 {
-    ready_.store(false, std::memory_order_release);
+    ready_.store(false, std::memory_order_seq_cst);
     if (ipc_ && ipc_->fd >= 0) {
         std::vector<unsigned char> close;
         appendU32(close, 1); // engine_off / local reconnect

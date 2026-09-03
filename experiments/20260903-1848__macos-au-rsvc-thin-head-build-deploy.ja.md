@@ -11,7 +11,8 @@ Issue #23 / #25 / #27 の localhost runtime 分離案について、macOS AU を
 - 実装 commit:
   - `f9911a3 runtimeの推論threadとsession状態を分離`
   - `6ea6b57 macOS AUをlocalhost RSVC thin headへ移行`
-- 検証時 HEAD: `6ea6b579ffa1399c52bbe6709e8ad0602e52a9bb`
+  - `6fe5185 AU再接続時のring競合を解消`
+- 最終検証時 HEAD: `6fe5185`
 - 担当: Codex
 - 設計レビュー: `mac_thin_head_review`
 
@@ -61,6 +62,7 @@ RVCRealtimeVST/build-macos/Debug/rvc-worker-smoke ignored ignored active "" 20 1
 - block 中の推論に対して heartbeat 応答を継続できた。
 - 2接続が同一可変 engine 状態を共有しないことを確認した。
 - `RVCRealtime-au` と `rvc-worker-smoke` はともにビルド成功した。
+- 同じruntimeへsmoke clientを2回連続接続し、session 1 / 2がともに成功した。
 - localhost TCP end-to-end smoke は次を返した。
 
 ```text
@@ -80,16 +82,23 @@ READY frames=960 latency=1920 infer_ms=0.385537 output_rms=0.0704574 drops=0 blo
 /Users/saitoumitsuru/Library/Audio/Plug-Ins/Components/RVCRealtime.component.backup-before-rsvc-20260903
 ```
 
+- ring競合修正前のthin-head版も次へ退避した。
+
+```text
+/Users/saitoumitsuru/Library/Audio/Plug-Ins/Components/RVCRealtime.component.backup-before-ring-fix-20260903
+```
+
 - 新AUの実行binaryは build output と installed bundle で一致した。
 
 ```text
-SHA-256 60b24af6d37627ef8ca410ba5efb440f0f929afade1b5666b4b286bf9adda390
+SHA-256 f471f20d4c16110307b1dfdb82c137738f101a0544aec228afb8e680907fd7cb
 ```
 
 - installed bundle の `codesign --verify --deep --strict` は成功した。
 - 新AUのResourcesには `Roboto-Regular.ttf` のみ存在し、旧 `rvc_worker.py` は含まれない。
 - `auval` は channel 1-1 / 1-2 / 2-2、render、custom UI を通過し、`AU VALIDATION SUCCEEDED` となった。
 - AudioComponentRegistrar は再起動済みである。
+- 再接続時のring resetは、`ready=false` とaudio側利用カウンタを順序付けし、管理threadだけが利用者ゼロを待つ方式へ変更した。audio callback側はlock・waitを行わない。
 
 ## 解釈 / 仮説
 

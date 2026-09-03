@@ -13,6 +13,14 @@ import time
 import traceback
 from pathlib import Path
 
+# Crash fix (macOS, observed launched from GarageBand): numpy and PyTorch each
+# bundle their own copy of Intel's OpenMP runtime (libiomp5.dylib); loading
+# both in one process aborts with SIGABRT in __kmp_abort_process ("OMP: Error
+# #15") unless this is set before they're imported below. Must be set this
+# early — RVCStreamEngine.__init__'s own os.environ.setdefault() calls run
+# too late relative to interpreter/library init on some launch paths.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 # issue #3/#6: the Windows host (WorkerClient_win.cpp) signals new
 # requests/responses with named Events (WinEvent below). macOS has no
 # equivalent in the stdlib without an extra pip dependency (posix_ipc), so the

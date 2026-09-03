@@ -28,6 +28,18 @@ def open_session(client: socket.socket, *, block_frames: int = 8) -> int:
 
 
 class RuntimeServiceTest(unittest.TestCase):
+    def test_session_audio_shape_is_passed_to_engine_factory(self):
+        calls = []
+
+        class SessionFactory:
+            def create_for_session(self, sample_rate, block_frames, crossfade, extra):
+                calls.append((sample_rate, block_frames, crossfade, extra))
+                return object()
+
+        engine = Runtime(SessionFactory()).create_engine(48000, 6240, 3840, 96000)
+        self.assertIs(type(engine), object)
+        self.assertEqual(calls, [(48000, 6240, 3840, 96000)])
+
     def test_handshake_heartbeat_and_audio(self):
         client, server = socket.socketpair()
         self.addCleanup(client.close)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import queue
 import socket
@@ -64,7 +65,10 @@ class Runtime:
             self.session_counter += 1
             return self.session_counter
 
-    def create_engine(self):
+    def create_engine(self, sample_rate: int, block_frames: int, crossfade: int, extra: int):
+        create_for_session = getattr(self.engine_factory, "create_for_session", None)
+        if create_for_session is not None:
+            return create_for_session(sample_rate, block_frames, crossfade, extra)
         return self.engine_factory()
 
 
@@ -78,6 +82,28 @@ def load_rvc_engine(config_path: str):
     engine = RVCStreamEngine(config)
     engine.prewarm()
     return engine
+
+
+class RvcEngineFactory:
+    """Build one engine per RSVC session using the AU-negotiated audio shape."""
+
+    def __init__(self, config_path: str):
+        with open(config_path, encoding="utf-8") as handle:
+            self._base_config = json.load(handle)
+
+    def create_for_session(
+        self, sample_rate: int, block_frames: int, crossfade: int, extra: int
+    ):
+        from RVCRealtime.worker.rvc_worker import RVCStreamEngine
+
+        config = copy.deepcopy(self._base_config)
+        config["sample_rate"] = sample_rate
+        config["block_ms"] = 1000.0 * block_frames / sample_rate
+        config["crossfade_ms"] = 1000.0 * crossfade / sample_rate
+        config["extra_ms"] = 1000.0 * extra / sample_rate
+        engine = RVCStreamEngine(config)
+        engine.prewarm()
+        return engine
 
 
 def _hello_ack() -> bytes:
@@ -145,7 +171,7 @@ def serve_client(sock: socket.socket, runtime: Runtime) -> None:
     if opened.frame_type is not FrameType.SESSION_OPEN:
         raise ValueError("SESSION_OPEN required")
     request_id, sample_rate, channels, block_frames, crossfade, extra = _parse_session_open(opened.payload)
-    engine = runtime.create_engine()
+    engine = runtime.create_engine(sample_rate, block_frames, crossfade, extra)
     _validate_engine_configuration(engine, sample_rate, block_frames)
     session_id = runtime.next_session_id()
     send_lock = threading.Lock()
@@ -205,14 +231,27 @@ class _HealthHandler(BaseHTTPRequestHandler):
         pass
 
 
-def run_service(runtime: Runtime, control_port: int, stream_port: int) -> None:
-    _HealthHandler.runtime = runtime
-    http = ThreadingHTTPServer((LOOPBACK, control_port), _HealthHandler)
-    threading.Thread(target=http.serve_forever, daemon=True).start()
-    with socket.create_server((LOOPBACK, stream_port), reuse_port=False) as listener:
-        while True:
-            client, _address = listener.accept()
-            threading.Thread(target=_serve_and_close, args=(client, runtime), daemon=True).start()
+def run_service(
+    runtime: Runtime,
+    control_port: int,
+    stream_port: int,
+    *,
+    enable_control: bool = True,
+) -> None:
+    http = None
+    if enable_control:
+        _HealthHandler.runtime = runtime
+        http = ThreadingHTTPServer((LOOPBACK, control_port), _HealthHandler)
+        threading.Thread(target=http.serve_forever, daemon=True).start()
+    try:
+        with socket.create_server((LOOPBACK, stream_port), reuse_port=False) as listener:
+            while True:
+                client, _address = listener.accept()
+                threading.Thread(target=_serve_and_close, args=(client, runtime), daemon=True).start()
+    finally:
+        if http is not None:
+            http.shutdown()
+            http.server_close()
 
 
 def _serve_and_close(client: socket.socket, runtime: Runtime) -> None:
@@ -228,12 +267,22 @@ def main() -> int:
     parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT)
     parser.add_argument("--stream-port", type=int, default=DEFAULT_STREAM_PORT)
     parser.add_argument("--engine-config", help="既存 worker 互換の RVC engine JSON")
+    parser.add_argument(
+        "--no-control",
+        action="store_true",
+        help="WebUIがcontrol/healthを提供するときはaudio streamだけlistenする",
+    )
     args = parser.parse_args()
     if args.engine_config:
-        engine_factory = lambda: load_rvc_engine(args.engine_config)
+        engine_factory = RvcEngineFactory(args.engine_config)
     else:
         engine_factory = PassthroughEngine
-    run_service(Runtime(engine_factory), args.control_port, args.stream_port)
+    run_service(
+        Runtime(engine_factory),
+        args.control_port,
+        args.stream_port,
+        enable_control=not args.no_control,
+    )
     return 0
 
 

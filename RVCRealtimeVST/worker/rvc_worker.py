@@ -19,8 +19,10 @@ from pathlib import Path
 # POSIX path polls the shared-memory sequence number instead of waiting on a
 # named semaphore/event. Both sides already tolerate short poll sleeps
 # elsewhere, and block sizes are >=20ms, so the added latency is negligible.
-# Shared memory itself uses multiprocessing.shared_memory (stdlib, POSIX
-# shm_open under the hood) instead of mmap's Windows-only tagname mode.
+# Shared memory itself is a plain file under $TMPDIR, mmap'd directly, instead
+# of mmap's Windows-only tagname mode or a POSIX shm_open() object (GarageBand
+# hosts AUv2 in-process and shm_open(..., O_CREAT, ...) has been observed
+# failing there with EPERM — sandboxing — while file I/O under $TMPDIR works).
 IS_POSIX = sys.platform != "win32"
 POLL_INTERVAL_S = 0.001
 
@@ -59,10 +61,7 @@ def write_status(shared, state: int, message: str) -> None:
     encoded = message.encode("utf-8", errors="replace")[: STATUS_TEXT_BYTES - 1]
     shared[STATUS_TEXT_OFFSET : STATUS_TEXT_OFFSET + STATUS_TEXT_BYTES] = b"\0" * STATUS_TEXT_BYTES
     shared[STATUS_TEXT_OFFSET : STATUS_TEXT_OFFSET + len(encoded)] = encoded
-    # memoryview (POSIX shared_memory.buf) has no flush(); POSIX shared memory
-    # pages are visible to other processes immediately, no explicit sync needed.
-    if hasattr(shared, "flush"):
-        shared.flush()
+    shared.flush()
 
 
 class WinEvent:
@@ -296,17 +295,20 @@ class RVCStreamEngine:
 
 def run(args: argparse.Namespace) -> int:
     shared = None
-    shm_handle = None
+    map_fd = None
     input_view = None
     output_view = None
     request_event = None
     response_event = None
     try:
         if IS_POSIX:
-            from multiprocessing import shared_memory
-
-            shm_handle = shared_memory.SharedMemory(name=args.map, create=False)
-            shared = shm_handle.buf
+            # `args.map` is a plain file path under $TMPDIR (see
+            # WorkerClient_mac.cpp), not a POSIX shm_open() name: GarageBand
+            # hosts AUv2 in-process and shm_open(..., O_CREAT, ...) has been
+            # observed failing there with EPERM (sandboxing), while ordinary
+            # file I/O under $TMPDIR is unaffected.
+            map_fd = os.open(args.map, os.O_RDWR)
+            shared = mmap.mmap(map_fd, MAP_BYTES)
             request_event = PosixSequenceWaiter(shared, 12)  # host writes the request sequence here
             response_event = PosixSequenceWaiter(shared, 16)  # unused: worker never waits on this
         else:
@@ -380,18 +382,17 @@ def run(args: argparse.Namespace) -> int:
             request_event.close()
         if response_event is not None:
             response_event.close()
-        if shm_handle is not None:
-            # POSIX: numpy/struct views must release their buffer export before
-            # SharedMemory.close(), or it raises BufferError.
-            input_view = None
-            output_view = None
-            shared = None
+        # numpy/struct views must release their buffer export before
+        # mmap.close(), or it raises BufferError.
+        input_view = None
+        output_view = None
+        if shared is not None:
             try:
-                shm_handle.close()  # detach only; the host (creator) shm_unlink()s
+                shared.close()  # detach only; the host (creator) unlink()s the file
             except BufferError:
                 pass
-        elif shared is not None:
-            shared.close()
+        if map_fd is not None:
+            os.close(map_fd)
 
 
 def parse_args() -> argparse.Namespace:

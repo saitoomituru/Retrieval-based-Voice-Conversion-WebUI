@@ -82,20 +82,6 @@ std::string jsonEscape(const std::string& text)
     return out.str();
 }
 
-// POSIX shm_open names historically have a short platform limit (macOS: the
-// legacy XNU shared-memory table caps names well under 32 bytes); keep this
-// short and hex-only to stay safely inside that bound on every host.
-std::string shortInstanceTag()
-{
-    static std::atomic<uint32_t> counter {0};
-    const unsigned seed = static_cast<unsigned>(::getpid())
-        ^ (counter.fetch_add(1) << 16)
-        ^ static_cast<unsigned>(::time(nullptr));
-    std::ostringstream out;
-    out << "rvc" << std::hex << seed; // no leading slash: see call sites for why
-    return out.str();
-}
-
 bool isFile(const std::string& path)
 {
     struct stat info {};
@@ -159,9 +145,10 @@ std::string workerScriptPath()
 } // namespace
 
 struct WorkerClient::Ipc {
-    int shmFd = -1;
+    int mapFd = -1;
     void* view = nullptr;
-    std::string shmName;
+    std::string mapPath; // regular file under $TMPDIR, not a POSIX shm_open
+                          // object — see launchWorker()'s comment for why.
     std::string configPath;
     pid_t pid = -1;
     bool spawned = false;
@@ -171,10 +158,10 @@ struct WorkerClient::Ipc {
     {
         if (view != nullptr && view != MAP_FAILED)
             ::munmap(view, kMapBytes);
-        if (shmFd >= 0)
-            ::close(shmFd);
-        if (!shmName.empty())
-            ::shm_unlink(("/" + shmName).c_str());
+        if (mapFd >= 0)
+            ::close(mapFd);
+        if (!mapPath.empty())
+            ::unlink(mapPath.c_str());
     }
 };
 
@@ -331,20 +318,34 @@ std::string WorkerClient::writeWorkerConfig(const Paths& paths, std::string& err
 bool WorkerClient::launchWorker(const Paths& paths, const uint64_t)
 {
     ipc_ = std::make_unique<Ipc>();
-    ipc_->shmName = shortInstanceTag();
 
-    ipc_->shmFd = ::shm_open(("/" + ipc_->shmName).c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
-    if (ipc_->shmFd < 0) {
-        setStatus(kStatusError, "IPC initialization failed (shm_open errno " + std::to_string(errno) + ")");
+    std::string configError;
+    ipc_->configPath = writeWorkerConfig(paths, configError);
+    if (ipc_->configPath.empty()) {
+        setStatus(kStatusError, configError.empty() ? "Could not write worker configuration" : configError);
         stopWorker();
         return false;
     }
-    if (::ftruncate(ipc_->shmFd, static_cast<off_t>(kMapBytes)) != 0) {
+
+    // A regular file under $TMPDIR, mmap'd MAP_SHARED, rather than a POSIX
+    // shm_open() object: GarageBand hosts AUv2 plug-ins in-process and (at
+    // least in one observed case) that process is sandboxed enough that
+    // shm_open(..., O_CREAT, ...) fails with EPERM, while ordinary file I/O
+    // under $TMPDIR is unaffected. The unsandboxed Python worker child opens
+    // this same path directly (see rvc_worker.py's IS_POSIX branch).
+    ipc_->mapPath = ipc_->configPath + ".shm";
+    ipc_->mapFd = ::open(ipc_->mapPath.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
+    if (ipc_->mapFd < 0) {
+        setStatus(kStatusError, "IPC initialization failed (open errno " + std::to_string(errno) + ")");
+        stopWorker();
+        return false;
+    }
+    if (::ftruncate(ipc_->mapFd, static_cast<off_t>(kMapBytes)) != 0) {
         setStatus(kStatusError, "IPC initialization failed (ftruncate errno " + std::to_string(errno) + ")");
         stopWorker();
         return false;
     }
-    ipc_->view = ::mmap(nullptr, kMapBytes, PROT_READ | PROT_WRITE, MAP_SHARED, ipc_->shmFd, 0);
+    ipc_->view = ::mmap(nullptr, kMapBytes, PROT_READ | PROT_WRITE, MAP_SHARED, ipc_->mapFd, 0);
     if (ipc_->view == MAP_FAILED) {
         ipc_->view = nullptr;
         setStatus(kStatusError, "Shared memory mapping failed (errno " + std::to_string(errno) + ")");
@@ -355,14 +356,6 @@ bool WorkerClient::launchWorker(const Paths& paths, const uint64_t)
     writeAt<uint32_t>(ipc_->view, 0, kMagic);
     writeAt<uint32_t>(ipc_->view, 4, kProtocolVersion);
     writeAt<int32_t>(ipc_->view, 8, kStatusStarting);
-
-    std::string configError;
-    ipc_->configPath = writeWorkerConfig(paths, configError);
-    if (ipc_->configPath.empty()) {
-        setStatus(kStatusError, configError.empty() ? "Could not write worker configuration" : configError);
-        stopWorker();
-        return false;
-    }
 
     const std::string workerScript = workerScriptPath();
     if (workerScript.empty()) {
@@ -381,7 +374,7 @@ bool WorkerClient::launchWorker(const Paths& paths, const uint64_t)
     std::vector<char*> argv;
     std::vector<std::string> argStorage {
         paths.python, "-I", workerScript,
-        "--map", ipc_->shmName,
+        "--map", ipc_->mapPath,
         "--config", ipc_->configPath,
     };
     argv.reserve(argStorage.size() + 1);

@@ -90,6 +90,7 @@ class RvcEngineFactory:
     def __init__(self, config_path: str):
         with open(config_path, encoding="utf-8") as handle:
             self._base_config = json.load(handle)
+        self._build_lock = threading.Lock()
 
     def create_for_session(
         self, sample_rate: int, block_frames: int, crossfade: int, extra: int
@@ -101,9 +102,13 @@ class RvcEngineFactory:
         config["block_ms"] = 1000.0 * block_frames / sample_rate
         config["crossfade_ms"] = 1000.0 * crossfade / sample_rate
         config["extra_ms"] = 1000.0 * extra / sample_rate
-        engine = RVCStreamEngine(config)
-        engine.prewarm()
-        return engine
+        # Config and parts of the legacy engine still use process-global state
+        # (cwd, sys.path, singleton device config). Serialize construction while
+        # keeping inference on independent per-session threads.
+        with self._build_lock:
+            engine = RVCStreamEngine(config)
+            engine.prewarm()
+            return engine
 
 
 def _hello_ack() -> bytes:

@@ -156,7 +156,7 @@ def singleton_variable(func):
 
 @singleton_variable
 class Config:
-    def __init__(self):
+    def __init__(self, argv=None):
         self.device = str(infer_device)
         self.dtype = infer_dtype
         self.is_half = infer_dtype == torch.float16
@@ -172,7 +172,7 @@ class Config:
             self.noparallel,
             self.noautoopen,
             self.dml,
-        ) = self.arg_parse()
+        ) = self.arg_parse(argv)
         # DML is an automatic fallback when no CUDA device satisfies the rule.
         self.dml = self.dml or (infer_device.type == "privateuseone")
         self.instead = ""
@@ -187,7 +187,7 @@ class Config:
         return d
 
     @staticmethod
-    def arg_parse() :
+    def arg_parse(argv=None) :
         exe = sys.executable or "python"
         parser = argparse.ArgumentParser()
         parser.add_argument("--port", type=int, default=7865, help="Listen port")
@@ -206,7 +206,7 @@ class Config:
             action="store_true",
             help="torch_dml",
         )
-        cmd_opts = parser.parse_args()
+        cmd_opts = parser.parse_args(argv)
 
         cmd_opts.port = cmd_opts.port if 0 <= cmd_opts.port <= 65535 else 7865
 

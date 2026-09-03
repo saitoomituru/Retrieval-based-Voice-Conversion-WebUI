@@ -161,9 +161,16 @@ class RVCStreamEngine:
         # Requesting only 1 thread up front avoids that thread creation.
         os.environ["OMP_NUM_THREADS"] = "1"
 
+        import torch
+
+        # Configure PyTorch before importing torchaudio or creating any parallel
+        # work. set_num_interop_threads() can only be called once per process.
+        torch.set_num_threads(1)
+        if torch.get_num_interop_threads() != 1:
+            torch.set_num_interop_threads(1)
+
         import librosa
         import numpy as np
-        import torch
         import torch.nn.functional as F
         import torchaudio.transforms as tat
 
@@ -172,9 +179,6 @@ class RVCStreamEngine:
         # dependent on whether libiomp5 actually reads those env vars in this
         # process's launch context (observed to differ between a bare CLI shell
         # and a GarageBand-launched child, see the comments above).
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
-
         from configs.config import Config
         from infer import rtrvc
         from tools.cuda_graph import run_cuda_graph
@@ -201,7 +205,9 @@ class RVCStreamEngine:
         self.sola_search_frame = self.zc
         self.extra_frame = int(round(self.extra_ms / 1000 * self.sample_rate / self.zc) * self.zc)
 
-        self.config = Config()
+        # The engine is also hosted by rvc_runtime_service.py. Its CLI flags are
+        # not WebUI flags, so do not let Config parse process-global sys.argv.
+        self.config = Config(argv=[])
         self.rvc = rtrvc.RVC(
             0.0,
             0.0,

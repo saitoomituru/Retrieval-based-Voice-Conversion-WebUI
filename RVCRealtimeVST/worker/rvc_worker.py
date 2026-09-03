@@ -334,7 +334,11 @@ def run(args: argparse.Namespace) -> int:
             response_event = WinEvent(args.response)
         if read_value(shared, 0, "I") != MAGIC or read_value(shared, 4, "I") != PROTOCOL_VERSION:
             raise RuntimeError("RVC VST protocol mismatch")
-        write_status(shared, STATUS_LOADING, "Loading Python and CUDA")
+        # Generic on purpose: this fires before configs/config.py picks a real
+        # device, and on macOS there is no CUDA — an unconditional "...CUDA"
+        # label here was misread as the worker trying (and retrying) to reach
+        # CUDA, when it never does on this platform.
+        write_status(shared, STATUS_LOADING, "Loading Python runtime")
         with open(args.config, "r", encoding="utf-8") as handle:
             cfg = json.load(handle)
         # RVC's Config parses process-wide CLI flags intended for its WebUI.

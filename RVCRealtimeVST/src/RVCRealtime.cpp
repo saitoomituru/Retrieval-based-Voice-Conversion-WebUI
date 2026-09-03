@@ -262,6 +262,13 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
   GetParam(kOutputGain)->InitDouble("Output", 0.0, -18.0, 12.0, 0.1, "dB");
 
   LoadUserConfiguration();
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  // The localhost runtime owns filesystem paths. Keep the serialized field for
+  // Windows/preset compatibility, but give a fresh macOS thin head the runtime's
+  // stable default model id instead of requiring a local .pth path.
+  if (mModelPath.GetLength() == 0)
+    mModelPath.Set("active");
+#endif
   if (mPythonPath.GetLength() == 0 && mRvcRoot.GetLength() > 0) {
     const std::string detected = DetectPythonPath(mRvcRoot.Get());
     if (!detected.empty())
@@ -739,6 +746,14 @@ bool RVCRealtime::ValidateConfiguration(std::string& error) const
     model = mModelPath.Get();
     index = mIndexPath.Get();
   }
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  (void) root;
+  (void) python;
+  (void) index;
+  if (model.empty()) { error = "Select a runtime model id."; return false; }
+  error.clear();
+  return true;
+#else
   if (root.empty()) { error = "Select the RVC package root."; return false; }
   if (!PathIsDirectory(root)) { error = "RVC root folder does not exist."; return false; }
   if (!PathIsFile(JoinPath(root, "infer/rtrvc.py"))) { error = "RVC source not found: infer/rtrvc.py."; return false; }
@@ -751,6 +766,7 @@ bool RVCRealtime::ValidateConfiguration(std::string& error) const
   if (!index.empty() && !PathIsFile(index)) { error = "Selected index file does not exist."; return false; }
   error.clear();
   return true;
+#endif
 }
 
 void RVCRealtime::LoadUserConfiguration()

@@ -9,6 +9,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(RVC_BUILD_SMOKE_TEST "Build the standalone worker smoke test" ON)
+option(RVC_MAC_LEGACY_EMBEDDED_WORKER
+    "Use the legacy macOS Python spawn/shared-file worker instead of localhost RSVC"
+    OFF)
 
 set(IPLUG_DEPLOY_PLUGINS OFF CACHE BOOL "Keep plugin artifacts inside this project" FORCE)
 set(IPLUG2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/iPlug2" CACHE PATH "iPlug2 root directory")
@@ -36,15 +39,18 @@ endif()
 include(${IPLUG2_DIR}/iPlug2.cmake)
 find_package(iPlug2 REQUIRED)
 
-# WorkerClient_win.cpp is the real Windows IPC bridge; WorkerClient_mac.cpp is
-# the real macOS/POSIX one (issue #3/#6, shm_open+mmap+posix_spawn, no named
-# events — see the file's own header comment). Any other platform (untested,
-# e.g. plain Linux) falls back to WorkerClient_stub_mac.cpp, the compile-only
-# placeholder that lets the UI build without a functioning worker.
+# Windows retains its established shared-memory worker. macOS defaults to the
+# localhost RSVC thin head; the in-AU Python spawn bridge remains available only
+# as an explicit recovery option while the migration is being validated.
 if(WIN32)
     set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_win.cpp)
 elseif(APPLE)
-    set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_mac.cpp)
+    if(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+        set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_mac.cpp)
+        add_compile_definitions(RVC_MAC_LEGACY_EMBEDDED_WORKER=1)
+    else()
+        set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_stream_mac.cpp)
+    endif()
 else()
     set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_stub_mac.cpp)
 endif()
@@ -62,12 +68,10 @@ if(WIN32)
     list(APPEND RVC_PLUGIN_SOURCES resources/main.rc)
 endif()
 
-# Ships worker/rvc_worker.py inside the macOS bundle's Contents/Resources/
-# (RESOURCES entries are copied flat, no subdirectory — WorkerClient_mac.cpp's
-# workerScriptPath() looks for it right there via BundleResourcePath). Windows
-# packaging copies the same file separately in scripts/build.ps1.
+# The RSVC thin head owns neither Python nor its worker script. Only legacy
+# macOS builds retain the bundled script. Windows packaging remains separate.
 set(RVC_PLUGIN_RESOURCES resources/fonts/Roboto-Regular.ttf)
-if(APPLE)
+if(APPLE AND RVC_MAC_LEGACY_EMBEDDED_WORKER)
     list(APPEND RVC_PLUGIN_RESOURCES worker/rvc_worker.py)
 endif()
 
@@ -121,7 +125,7 @@ if(RVC_BUILD_SMOKE_TEST AND (WIN32 OR APPLE))
     if(MSVC)
         target_compile_options(rvc-worker-smoke PRIVATE /W4 /permissive- /utf-8)
     endif()
-    if(APPLE)
+    if(APPLE AND RVC_MAC_LEGACY_EMBEDDED_WORKER)
         # WorkerClient_mac.cpp includes IPlugPaths.h (BundleResourcePath is
         # skipped at preprocessing time here since AU_API/APP_API aren't defined
         # for this plain executable, but the header still needs to resolve).

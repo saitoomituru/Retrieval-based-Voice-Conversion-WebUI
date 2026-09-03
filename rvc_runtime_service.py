@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import socket
 import struct
 import threading
@@ -49,8 +50,8 @@ class PassthroughEngine:
 
 
 class Runtime:
-    def __init__(self, engine=None):
-        self.engine = engine or PassthroughEngine()
+    def __init__(self, engine_factory=None):
+        self.engine_factory = engine_factory or PassthroughEngine
         self.state = "READY"
         self.session_counter = 0
         self.lock = threading.Lock()
@@ -62,6 +63,9 @@ class Runtime:
         with self.lock:
             self.session_counter += 1
             return self.session_counter
+
+    def create_engine(self):
+        return self.engine_factory()
 
 
 def load_rvc_engine(config_path: str):
@@ -102,6 +106,35 @@ def _parse_session_open(payload: bytes) -> tuple[int, int, int, int, int, int]:
     return request_id, sample_rate, channels, block_frames, crossfade, extra
 
 
+def _validate_engine_configuration(engine, sample_rate: int, block_frames: int) -> None:
+    engine_sample_rate = getattr(engine, "sample_rate", sample_rate)
+    if engine_sample_rate != sample_rate:
+        raise ValueError(
+            f"engine sample rate mismatch: requested={sample_rate}, engine={engine_sample_rate}"
+        )
+    engine_block_frames = getattr(engine, "block_frame", block_frames)
+    if engine_block_frames != block_frames:
+        raise ValueError(
+            f"engine block size mismatch: requested={block_frames}, engine={engine_block_frames}"
+        )
+
+
+def _run_inference(engine, requests: queue.Queue, send_frame, sample_rate: int) -> None:
+    while True:
+        item = requests.get()
+        if item is None:
+            return
+        frame, frames, timestamp_ns, flags, pcm = item
+        values = struct.unpack("<" + "f" * frames, pcm)
+        output = engine.process(values, 0.0, 0.0, 0.0, 0.5, -60.0, 0)
+        payload = pack_audio(sample_rate, output, timestamp_ns=timestamp_ns, flags=flags)
+        try:
+            send_frame(Frame(FrameType.AUDIO_OUT, payload, frame.session_id, frame.sequence,
+                             time.monotonic_ns()))
+        except OSError:
+            return
+
+
 def serve_client(sock: socket.socket, runtime: Runtime) -> None:
     sock.settimeout(5.0)
     hello = recv_frame(sock)
@@ -112,30 +145,46 @@ def serve_client(sock: socket.socket, runtime: Runtime) -> None:
     if opened.frame_type is not FrameType.SESSION_OPEN:
         raise ValueError("SESSION_OPEN required")
     request_id, sample_rate, channels, block_frames, crossfade, extra = _parse_session_open(opened.payload)
+    engine = runtime.create_engine()
+    _validate_engine_configuration(engine, sample_rate, block_frames)
     session_id = runtime.next_session_id()
+    send_lock = threading.Lock()
+
+    def send_frame(frame: Frame) -> None:
+        packed = pack_frame(frame)
+        with send_lock:
+            sock.sendall(packed)
+
     accepted = struct.pack("<IIIHHIIII", request_id, session_id, sample_rate, channels, 1, block_frames,
                            crossfade, extra, block_frames * 2) + struct.pack("<II", 2, 3)
-    sock.sendall(pack_frame(Frame(FrameType.SESSION_ACCEPT, accepted, session_id=session_id)))
-    while True:
-        frame = recv_frame(sock)
-        if frame.session_id != session_id:
-            raise ValueError("session mismatch")
-        if frame.frame_type is FrameType.HEARTBEAT:
-            sock.sendall(pack_frame(Frame(FrameType.HEARTBEAT_ACK, session_id=session_id,
-                                          sequence=frame.sequence, timestamp_ns=time.monotonic_ns())))
-        elif frame.frame_type is FrameType.AUDIO_IN:
-            rate, frames, timestamp_ns, flags, pcm = unpack_audio(frame.payload)
-            if rate != sample_rate or frames != block_frames:
-                raise ValueError("audio configuration mismatch")
-            values = struct.unpack("<" + "f" * frames, pcm)
-            output = runtime.engine.process(values, 0.0, 0.0, 0.0, 0.5, -60.0, 0)
-            payload = pack_audio(sample_rate, output, timestamp_ns=timestamp_ns, flags=flags)
-            sock.sendall(pack_frame(Frame(FrameType.AUDIO_OUT, payload, session_id, frame.sequence,
-                                          time.monotonic_ns())))
-        elif frame.frame_type is FrameType.CLOSE:
-            return
-        else:
-            raise ValueError(f"unsupported frame: {frame.frame_type.name}")
+    send_frame(Frame(FrameType.SESSION_ACCEPT, accepted, session_id=session_id))
+    requests = queue.Queue()
+    inference = threading.Thread(
+        target=_run_inference,
+        args=(engine, requests, send_frame, sample_rate),
+        daemon=True,
+        name=f"rvc-inference-{session_id}",
+    )
+    inference.start()
+    try:
+        while True:
+            frame = recv_frame(sock)
+            if frame.session_id != session_id:
+                raise ValueError("session mismatch")
+            if frame.frame_type is FrameType.HEARTBEAT:
+                send_frame(Frame(FrameType.HEARTBEAT_ACK, session_id=session_id,
+                                 sequence=frame.sequence, timestamp_ns=time.monotonic_ns()))
+            elif frame.frame_type is FrameType.AUDIO_IN:
+                rate, frames, timestamp_ns, flags, pcm = unpack_audio(frame.payload)
+                if rate != sample_rate or frames != block_frames:
+                    raise ValueError("audio configuration mismatch")
+                requests.put((frame, frames, timestamp_ns, flags, pcm))
+            elif frame.frame_type is FrameType.CLOSE:
+                return
+            else:
+                raise ValueError(f"unsupported frame: {frame.frame_type.name}")
+    finally:
+        requests.put(None)
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -180,8 +229,11 @@ def main() -> int:
     parser.add_argument("--stream-port", type=int, default=DEFAULT_STREAM_PORT)
     parser.add_argument("--engine-config", help="既存 worker 互換の RVC engine JSON")
     args = parser.parse_args()
-    engine = load_rvc_engine(args.engine_config) if args.engine_config else PassthroughEngine()
-    run_service(Runtime(engine), args.control_port, args.stream_port)
+    if args.engine_config:
+        engine_factory = lambda: load_rvc_engine(args.engine_config)
+    else:
+        engine_factory = PassthroughEngine
+    run_service(Runtime(engine_factory), args.control_port, args.stream_port)
     return 0
 
 

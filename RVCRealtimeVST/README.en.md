@@ -19,7 +19,10 @@ This directory does not include a Python runtime, RVC models, index files, train
 - `.pth` models and optional `.index` files
 - 64-bit VST hosts such as Studio One
 
-Windows x86, macOS, and Linux plug-in targets are not currently configured.
+Windows x86 and Linux plug-in targets are not currently configured. An experimental
+macOS APP (standalone) and AU (AUv2) target now build and load in GarageBand; see
+`docs/macos-build.ja.md`. The macOS worker/IPC bridge is still a stub
+(`src/WorkerClient_stub_mac.cpp`) with no real-time conversion yet.
 
 ## Architecture
 

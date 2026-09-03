@@ -1,8 +1,29 @@
 diff --git a/IPlug/APP/IPlugAPP_host.cpp b/IPlug/APP/IPlugAPP_host.cpp
-index 9a356d6af..14aa0f18a 100644
+index 9a356d6af..00cb642db 100644
 --- a/IPlug/APP/IPlugAPP_host.cpp
 +++ b/IPlug/APP/IPlugAPP_host.cpp
-@@ -650,6 +650,15 @@ bool IPlugAPPHost::InitMidi()
+@@ -62,10 +62,20 @@ bool IPlugAPPHost::Init()
+   
+   TryToChangeAudioDriverType(); // will init RTAudio with an API type based on gState->mAudioDriverType
+   ProbeAudioIO(); // find out what audio IO devs are available and put their IDs in the global variables gAudioInputDevs / gAudioOutputDevs
++#if PLUG_DOES_MIDI_IN || PLUG_DOES_MIDI_OUT
+   InitMidi(); // creates RTMidiIn and RTMidiOut objects
+   ProbeMidiIO(); // find out what midi IO devs are available and put their names in the global variables gMidiInputDevs / gMidiOutputDevs
+   SelectMIDIDevice(ERoute::kInput, mState.mMidiInDev.Get());
+   SelectMIDIDevice(ERoute::kOutput, mState.mMidiOutDev.Get());
++#else
++  // Fork-local: plug-ins with no MIDI I/O at all skip the whole MIDI setup
++  // sequence, not just InitMidi(). SelectMIDIDevice()/GetMIDIPortNumber()
++  // dereference mMidiIn/mMidiOut unconditionally unless the configured
++  // device name happens to equal OFF_TEXT ("off"); calling them with
++  // mMidiIn/mMidiOut left null (as InitMidi() alone now leaves them, see
++  // scripts/patches/iplug2-skip-no-midi-init.patch) crashes with
++  // EXC_BAD_ACCESS instead. See experiments/20260903-1249__standalone-coremidi-hang.ja.md.
++#endif
+   
+   mIPlug->OnParamReset(kReset);
+   mIPlug->OnActivate(true);
+@@ -650,6 +660,15 @@ bool IPlugAPPHost::InitMidi()
    if (mNoIO || IsScreenshotMode())
      return true;
  

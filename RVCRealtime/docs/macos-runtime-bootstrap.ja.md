@@ -2,7 +2,7 @@
 
 状態: `[ISSUE #6 基盤]` `[CPU MODEL LOAD確認済み]` `[AU連携未実装]`
 
-この文書は、`RVCRealtimeVST`が将来macOSから利用する外部RVC runtimeを、
+この文書は、`RVCRealtime`が将来macOSから利用する外部RVC runtimeを、
 Intel Mac上で再現するための暫定手順である。WebUIの起動成功をAudio Unit連携や
 音声変換成功とは扱わない。
 

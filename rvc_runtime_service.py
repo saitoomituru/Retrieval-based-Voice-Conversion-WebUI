@@ -73,7 +73,7 @@ def load_rvc_engine(config_path: str):
 
     with open(config_path, encoding="utf-8") as handle:
         config = json.load(handle)
-    from RVCRealtimeVST.worker.rvc_worker import RVCStreamEngine
+    from RVCRealtime.worker.rvc_worker import RVCStreamEngine
 
     engine = RVCStreamEngine(config)
     engine.prewarm()

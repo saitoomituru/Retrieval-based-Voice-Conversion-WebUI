@@ -53,7 +53,7 @@ tools/cuda_graph.py
 ## Source layout
 
 ```text
-RVCRealtimeVST/
+RVCRealtime/
 |-- CMakeLists.txt
 |-- config.h
 |-- src/                         Plug-in, UI, state, and IPC source
@@ -109,7 +109,7 @@ A recursive clone is recommended. GitHub's Download ZIP archive does not contain
 ```powershell
 git config --global core.longpaths true
 git clone --recursive https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git
-cd Retrieval-based-Voice-Conversion-WebUI\RVCRealtimeVST
+cd Retrieval-based-Voice-Conversion-WebUI\RVCRealtime
 ```
 
 For an existing non-recursive clone, run:
@@ -132,7 +132,7 @@ The VST3 SDK gitlinks additionally lock `base`, `cmake`, `pluginterfaces`, and `
 
 ## Build VST2 and VST3
 
-Run this command from the `RVCRealtimeVST` directory:
+Run this command from the `RVCRealtime` directory:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1

@@ -3,7 +3,7 @@
 状態: `[PLI WORKSPACE CONTRACT]` `[LOCAL DEVELOPMENT]` `[NO STANDALONE RUNTIME CLAIM]`
 
 この文書は `saitoomituru/Retrieval-based-Voice-Conversion-WebUI` fork に対する、SphereOS Atlantis Prompt Line Interface 版の作業机契約です。
-目的は `RVCRealtimeVST` の macOS / Audio Unit 移植を、複数 agent / session で同じ制約と証拠境界を保ったまま進めることです。
+目的は `RVCRealtime` の macOS / Audio Unit 移植を、複数 agent / session で同じ制約と証拠境界を保ったまま進めることです。
 
 ## 1. Boot prompt
 
@@ -11,7 +11,7 @@
 
 ```text
 Repository: saitoomituru/Retrieval-based-Voice-Conversion-WebUI
-Primary goal: RVCRealtimeVST の macOS + Audio Unit 対応
+Primary goal: RVCRealtime の macOS + Audio Unit 対応
 Roadmap: Issue #1 と関連 child issue
 Local policy: AGENTS.md
 Upstream: RVC-Project/Retrieval-based-Voice-Conversion-WebUI
@@ -93,7 +93,7 @@ python3 scripts/record_experiment.py \
 python3 scripts/record_experiment.py \
   --slug cmake-configure \
   --issue 4 \
-  --run 'cmake -S RVCRealtimeVST -B RVCRealtimeVST/build-macos' \
+  --run 'cmake -S RVCRealtime -B RVCRealtime/build-macos' \
   --result auto
 ```
 

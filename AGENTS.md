@@ -1,11 +1,11 @@
 # AGENTS.md — macOS / Audio Unit 移植作業規約
 
-この文書は、この fork で人間と coding agent が `RVCRealtimeVST` の macOS / Audio Unit 対応を進めるための局所正本です。
+この文書は、この fork で人間と coding agent が `RVCRealtime` の macOS / Audio Unit 対応を進めるための局所正本です。
 上流 RVC の一般仕様を置き換えません。
 
 ## 目的
 
-- 既存 `RVCRealtimeVST` の Windows 実装を壊さず macOS へ移植する
+- 既存 `RVCRealtime` の Windows 実装を壊さず macOS へ移植する
 - iPlug2 の Audio Unit 対応を成立させ、Logic Pro / GarageBand で検証する
 - 汎用化できる差分は upstream PR へ戻せる形に保つ
 - キャラクター固有モデル、学習データ、作品都合を上流汎用コードへ混ぜない
@@ -15,7 +15,7 @@
 1. この `AGENTS.md`
 2. `README.md` 冒頭の fork 方針
 3. Issue #1 と作業対象の子 Issue
-4. `RVCRealtimeVST/README.en.md` または最寄りの README
+4. `RVCRealtime/README.en.md` または最寄りの README
 5. ZeroRoomLab-manifest の公開 `AGENTS.md` と、必要な運用文書
 6. SphereOS-Atlantis の PLI / Sphere-DOS 文書を参照する場合は、その実装状態と証拠境界
 

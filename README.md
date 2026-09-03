@@ -1,9 +1,9 @@
 > [!IMPORTANT]
-> **Fork development focus: macOS + Audio Unit support for `RVCRealtimeVST`.**
+> **Fork development focus: macOS + Audio Unit support for `RVCRealtime`.**
 >
 > This fork is being used to port the upstream Windows VST implementation to macOS and expose it as an Audio Unit for Logic Pro / GarageBand. The goal is to keep the work generic and upstreamable rather than turn this fork into a separate all-purpose RVC distribution.
 >
-> Development roadmap: [#1 — Port RVCRealtimeVST to macOS Audio Unit](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/1)
+> Development roadmap: [#1 — Port RVCRealtime to macOS Audio Unit](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/1)
 >
 > Current climb: platform audit → macOS process/IPC abstraction → macOS build → Audio Unit target → worker/runtime integration → Logic/GarageBand validation → upstream PR.
 >

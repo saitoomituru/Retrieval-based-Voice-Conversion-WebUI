@@ -50,7 +50,7 @@ tools/cuda_graph.py
 ## 源码结构
 
 ```text
-RVCRealtimeVST/
+RVCRealtime/
 ├─ CMakeLists.txt
 ├─ config.h
 ├─ src/                         插件、界面、状态和 IPC 源码
@@ -106,7 +106,7 @@ iPlug2 的首次 CMake 配置会获取 WIL 和 WebView2 SDK，因此首次构建
 ```powershell
 git config --global core.longpaths true
 git clone --recursive https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git
-cd Retrieval-based-Voice-Conversion-WebUI\RVCRealtimeVST
+cd Retrieval-based-Voice-Conversion-WebUI\RVCRealtime
 ```
 
 已有普通 clone 时执行：
@@ -129,7 +129,7 @@ VST3 SDK 所需的 `base`、`cmake`、`pluginterfaces` 和 `public.sdk` 由 VST3
 
 ## 编译 VST2 和 VST3
 
-在 `RVCRealtimeVST` 目录执行：
+在 `RVCRealtime` 目录执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1

@@ -2,7 +2,7 @@
 
 状態: `[ISSUE #4]` `[APP/AU BUILD確認済み]` `[AU実機DAWでの挿入確認済み]` `[実IPC未実装]`
 
-この文書は、`RVCRealtimeVST`をmacOS上でconfigure・compileするための手順である。
+この文書は、`RVCRealtime`をmacOS上でconfigure・compileするための手順である。
 実際のRVC worker連携（issue #3/#6）は別文書・別Issueの範囲で、現状の`WorkerClient_stub_mac.cpp`は
 実IPCを行わないGUI確認用のスタブであることに注意する。
 

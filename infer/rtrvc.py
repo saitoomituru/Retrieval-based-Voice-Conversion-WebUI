@@ -1,4 +1,6 @@
 import traceback
+import os
+from pathlib import Path
 from time import time as ttime
 import faiss
 import numpy as np
@@ -131,6 +133,7 @@ class RVC:
                 self.model_fcpe = last_rvc.model_fcpe
         except:
             printt(traceback.format_exc())
+            raise
 
     def change_key(self, new_key):
         self.f0_up_key = new_key
@@ -193,7 +196,7 @@ class RVC:
 
             printt(i18n("正在加载RMVPE模型"))
             self.model_rmvpe = RMVPE(
-                "assets/rmvpe/rmvpe.pt",
+                str(Path(os.environ.get("rmvpe_root", "assets/rmvpe")) / "rmvpe.pt"),
                 is_half=self.is_half,
                 device=self.device,
             )

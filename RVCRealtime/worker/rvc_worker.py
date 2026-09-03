@@ -144,8 +144,9 @@ class RVCStreamEngine:
         engine_cfg = RealtimeEngineConfig.from_mapping(cfg)
         cfg = engine_cfg.as_worker_mapping()
         self.root = engine_cfg.rvc_root
-        os.chdir(self.root)
-        sys.path.insert(0, str(self.root))
+        self.assets_root = engine_cfg.assets_root
+        os.environ["hubert_root"] = str(self.assets_root / "hubert_base")
+        os.environ["rmvpe_root"] = str(self.assets_root / "rmvpe")
         # Force-set: GarageBand's own process environment may already define
         # these (see the KMP_DUPLICATE_LIB_OK comment near the top of this
         # file for why setdefault() alone is not enough here).

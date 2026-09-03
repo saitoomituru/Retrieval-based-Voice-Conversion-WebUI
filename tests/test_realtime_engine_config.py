@@ -20,6 +20,7 @@ class RealtimeEngineConfigTest(unittest.TestCase):
         )
 
         self.assertEqual(config.rvc_root, tmp_path.resolve())
+        self.assertEqual(config.assets_root, (tmp_path / "assets").resolve())
         self.assertEqual(config.as_worker_mapping()["sample_rate"], 48000)
         self.assertEqual(config.as_worker_mapping()["index_path"], str(tmp_path / "model.index"))
 
@@ -33,6 +34,19 @@ class RealtimeEngineConfigTest(unittest.TestCase):
             RealtimeEngineConfig.from_mapping(
                 {"rvc_root": str(tmp_path), "model_path": str(tmp_path / "m.pth"), "block_ms": 0}
             )
+
+    def test_config_allows_runner_owned_assets_root(self) -> None:
+        tmp_path = Path(__file__).parent
+        assets = tmp_path / "external-assets"
+        config = RealtimeEngineConfig.from_mapping(
+            {
+                "rvc_root": str(tmp_path),
+                "assets_root": str(assets),
+                "model_path": str(tmp_path / "model.pth"),
+            }
+        )
+        self.assertEqual(config.assets_root, assets.resolve())
+        self.assertEqual(config.as_worker_mapping()["assets_root"], str(assets.resolve()))
 
 
 if __name__ == "__main__":

@@ -281,6 +281,11 @@ def configure_rvc_runtime(model_name, file_index):
 
     runtime_config = {
         "rvc_root": str(Path(now_dir).resolve()),
+        "assets_root": str(
+            Path(
+                os.environ.get("RVC_RUNTIME_ASSETS_ROOT", Path(now_dir) / "assets")
+            ).resolve()
+        ),
         "model_path": str(model_path),
         "index_path": str(Path(index_path).resolve()) if index_path else "",
     }

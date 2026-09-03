@@ -21,6 +21,7 @@ class RealtimeEngineConfig:
     """
 
     rvc_root: Path
+    assets_root: Path
     model_path: Path
     index_path: Optional[Path]
     sample_rate: int
@@ -41,8 +42,16 @@ class RealtimeEngineConfig:
         if isinstance(raw_index, str) and raw_index:
             index_path = Path(raw_index).expanduser().resolve()
 
+        rvc_root = required_path("rvc_root")
+        raw_assets = value.get("assets_root")
+        assets_root = (
+            Path(raw_assets).expanduser().resolve()
+            if isinstance(raw_assets, str) and raw_assets
+            else (rvc_root / "assets").resolve()
+        )
         config = cls(
-            rvc_root=required_path("rvc_root"),
+            rvc_root=rvc_root,
+            assets_root=assets_root,
             model_path=required_path("model_path"),
             index_path=index_path,
             sample_rate=int(value.get("sample_rate", 40000)),
@@ -63,6 +72,7 @@ class RealtimeEngineConfig:
 
         return {
             "rvc_root": str(self.rvc_root),
+            "assets_root": str(self.assets_root),
             "model_path": str(self.model_path),
             "index_path": str(self.index_path) if self.index_path else "",
             "sample_rate": self.sample_rate,

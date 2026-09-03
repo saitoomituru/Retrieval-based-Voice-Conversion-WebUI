@@ -136,7 +136,16 @@ class RVCStreamEngine:
         os.chdir(self.root)
         sys.path.insert(0, str(self.root))
         os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-        os.environ.setdefault("OMP_NUM_THREADS", "4")
+        # Crash fix (macOS, launched from GarageBand): the process.log for a
+        # crashing session showed 2 successful RVCStreamEngine.process() calls
+        # (prewarm + first real block) before __kmp_abort_process on the 3rd.
+        # infer_count 0-2 are always logged (see infer/rtrvc.py's report_status),
+        # and OpenMP's thread pool is lazily grown on repeat calls — consistent
+        # with pthread_create failing under GarageBand's sandbox once OpenMP
+        # tries to actually spin up >1 worker thread, which OpenMP treats as a
+        # fatal, unrecoverable error rather than degrading to fewer threads.
+        # Requesting only 1 thread up front avoids that thread creation.
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
 
         import librosa
         import numpy as np

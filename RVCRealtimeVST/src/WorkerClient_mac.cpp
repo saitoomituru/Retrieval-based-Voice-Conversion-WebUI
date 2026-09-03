@@ -576,8 +576,17 @@ void WorkerClient::threadMain()
             const pid_t exited = ::waitpid(ipc_->pid, &exitStatus, WNOHANG);
             if (exited == ipc_->pid) {
                 ipc_->spawned = false; // already reaped
-                if (workerState >= 0)
-                    setStatus(kStatusError, "Python worker exited with code " + std::to_string(WEXITSTATUS(exitStatus)));
+                if (workerState >= 0) {
+                    std::string detail;
+                    if (WIFEXITED(exitStatus)) {
+                        detail = "exit code " + std::to_string(WEXITSTATUS(exitStatus));
+                    } else if (WIFSIGNALED(exitStatus)) {
+                        detail = "signal " + std::to_string(WTERMSIG(exitStatus));
+                    } else {
+                        detail = "unknown wait status";
+                    }
+                    setStatus(kStatusError, "Python worker exited with " + detail);
+                }
                 stopWorker();
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 continue;

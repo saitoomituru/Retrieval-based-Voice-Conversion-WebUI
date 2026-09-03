@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 
@@ -114,6 +115,30 @@ std::string temporaryLogDirectory(std::string& error)
     if (!ensureDirectory(logDirectory, error))
         return {};
     return logDirectory;
+}
+
+// Always-on diagnostic trail, separate from the per-instance config/.process.log
+// files: those only exist once a Python child is actually spawned, so a failure
+// in launchWorker() *before* spawn (e.g. writeWorkerConfig()) leaves no trace in
+// $TMPDIR/RVCRealtime/logs/instance_*. A fast, repeating failure there also
+// looks identical to "no attempts happened" from outside. Every setStatus()
+// transition — including these early ones — is appended here instead.
+void appendDiagnosticLog(const std::string& line)
+{
+    std::string error;
+    const std::string logDirectory = temporaryLogDirectory(error);
+    if (logDirectory.empty())
+        return; // best-effort; a failed log write must never fail the caller
+    std::ofstream file(logDirectory + "/diagnostic.log", std::ios::app);
+    if (!file.is_open())
+        return;
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", std::localtime(&nowTime));
+    file << buffer << "." << std::setfill('0') << std::setw(3) << ms.count()
+         << " pid=" << ::getpid() << " " << line << "\n";
 }
 
 // Resolves worker/rvc_worker.py, which CMakeLists.txt copies flat into the
@@ -261,9 +286,15 @@ WorkerClient::Paths WorkerClient::pathsSnapshot() const
 
 void WorkerClient::setStatus(const int status, const std::string& text)
 {
-    status_.store(status, std::memory_order_release);
-    std::lock_guard<std::mutex> lock(statusTextMutex_);
-    statusText_ = text;
+    const int previousStatus = status_.exchange(status, std::memory_order_acq_rel);
+    bool textChanged = false;
+    {
+        std::lock_guard<std::mutex> lock(statusTextMutex_);
+        textChanged = statusText_ != text;
+        statusText_ = text;
+    }
+    if (previousStatus != status || textChanged)
+        appendDiagnosticLog("status=" + std::to_string(status) + " text=\"" + text + "\"");
 }
 
 uint32_t WorkerClient::calculateBlockFrames() const noexcept

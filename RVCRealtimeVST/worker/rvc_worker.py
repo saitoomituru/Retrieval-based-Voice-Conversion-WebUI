@@ -13,6 +13,8 @@ import time
 import traceback
 from pathlib import Path
 
+from rvc_realtime_engine import RealtimeEngineConfig
+
 # Crash fix (macOS, observed launched from GarageBand): numpy and PyTorch each
 # bundle their own copy of Intel's OpenMP runtime (libiomp5.dylib); loading
 # both in one process aborts with SIGABRT in __kmp_abort_process ("OMP: Error
@@ -139,7 +141,9 @@ class PosixSequenceWaiter:
 
 class RVCStreamEngine:
     def __init__(self, cfg: dict):
-        self.root = Path(cfg["rvc_root"]).resolve()
+        engine_cfg = RealtimeEngineConfig.from_mapping(cfg)
+        cfg = engine_cfg.as_worker_mapping()
+        self.root = engine_cfg.rvc_root
         os.chdir(self.root)
         sys.path.insert(0, str(self.root))
         # Force-set: GarageBand's own process environment may already define

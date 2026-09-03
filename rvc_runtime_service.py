@@ -64,6 +64,18 @@ class Runtime:
             return self.session_counter
 
 
+def load_rvc_engine(config_path: str):
+    """Load the existing reusable worker engine outside the AU process."""
+
+    with open(config_path, encoding="utf-8") as handle:
+        config = json.load(handle)
+    from RVCRealtimeVST.worker.rvc_worker import RVCStreamEngine
+
+    engine = RVCStreamEngine(config)
+    engine.prewarm()
+    return engine
+
+
 def _hello_ack() -> bytes:
     name = b"RVC WebUI runtime"
     caps = json.dumps({"protocol_version": 1, "backends": ["cpu"], "sample_rates": [44100, 48000],
@@ -166,8 +178,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT)
     parser.add_argument("--stream-port", type=int, default=DEFAULT_STREAM_PORT)
+    parser.add_argument("--engine-config", help="既存 worker 互換の RVC engine JSON")
     args = parser.parse_args()
-    run_service(Runtime(), args.control_port, args.stream_port)
+    engine = load_rvc_engine(args.engine_config) if args.engine_config else PassthroughEngine()
+    run_service(Runtime(engine), args.control_port, args.stream_port)
     return 0
 
 

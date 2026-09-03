@@ -29,11 +29,16 @@ Issue #1 / #20 / #21 / #24 / #25 / #28 / #30 / #31 / #32に対し、論理servic
 5. 途中で、runtime CLIを`Config()`がWebUI CLIとして再解釈する問題と、PyTorch interop thread設定の非冪等性も再現した。
 6. `assets_root`をrunner設定の絶対pathとして追加し、engineの`os.chdir()`を廃止した。HuBERTとRMVPEはrunner指定asset rootから解決する。
 7. 単一root統合後、実modelでC++ thin headからRSVC sessionを開き、1 block変換に成功した。
+8. WebUIを`127.0.0.1:7865`で起動し、WebUI所有のpassthrough runner PID 68921を確認した。`rvc_runtime_configure` APIからDeltamon modelを適用すると、所有childだけがPID 69192へ交代し、`engine=rvc` / `READY`となった。
+9. model適用後もlistenは`127.0.0.1:17865`だけで、旧port `17864`は開かなかった。生成設定`TEMP/rvc-runtime-engine.json`にはroot、asset、modelの絶対pathが書かれ、repositoryへ入らないようgitignoreした。
+10. WebUI所有runnerへC++ thin headを接続して再度1 block変換し、非zero出力とdrop 0を確認した。
+11. build済みcomponentと配備先binaryのSHA-256が一致し、`codesign --verify --deep --strict`と`auval -v aufx Rvcr Rvcp`が成功した。
 
 ## 実model結果
 
 ```text
 READY frames=6240 latency=12480 infer_ms=1250.92 output_rms=0.0185711 drops=0 blocks=1 status="RSVC 127.0.0.1:17865 session 2"
+READY frames=6240 latency=12480 infer_ms=1295.14 output_rms=0.0188121 drops=0 blocks=1 status="RSVC 127.0.0.1:17865 session 2"
 ```
 
 - sample rate: 48000 Hz
@@ -42,6 +47,17 @@ READY frames=6240 latency=12480 infer_ms=1250.92 output_rms=0.0185711 drops=0 bl
 - output RMS: 非zero
 - drop: 0
 - CPU推論時間約1251 msはblock長を超えるため、低latency合格を意味しない
+- WebUI所有runner経由の再測定でも約1295 msであり、接続・変換成立とrealtime deadline合格は分離する
+
+## AU配備・検証
+
+- build: `RVCRealtime/build-macos/out/Debug/RVCRealtime.component`
+- install: `~/Library/Audio/Plug-Ins/Components/RVCRealtime.component`
+- 旧component退避: `RVCRealtime.component.backup-before-webui-runtime-20260904`
+- binary SHA-256: `e570ae13856d79aa62d828f8ab83eb58a1de4b4a35fe5b274c8df243fbb4394d`（build/install一致）
+- code signature: `codesign --verify --deep --strict` 成功
+- Audio Unit validation: `auval -v aufx Rvcr Rvcp` / `AU VALIDATION SUCCEEDED`
+- GarageBandは配備前から起動中のため、旧component imageを保持している。再起動後の人手検証が必要。
 
 ## 解釈
 
@@ -66,7 +82,7 @@ READY frames=6240 latency=12480 infer_ms=1250.92 output_rms=0.0185711 drops=0 bl
 
 ## Recovery / 次の一手
 
-1. rootからAUを再build・配備し、`auval`を通す。
-2. root WebUIを起動してmodelをAUへ適用する。
-3. GarageBandを再起動し、挿入、ENGINE ON、再生、変換音、drop、復帰を人手確認する。
+1. GarageBandを再起動し、挿入、ENGINE ON、再生、変換音、drop、復帰を人手確認する。
+2. AU parameterをruntimeへ反映する`CONFIG_UPDATE`を実装する。現時点のmodel変換は固定parameterである。
+3. 複数sessionでmodel weightを共有し、sessionごとの再loadを避ける。
 4. CPU realtime deadline未達は音質・block・backend別に計測し、Issueへ分離する。

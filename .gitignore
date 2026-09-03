@@ -12,6 +12,7 @@ assets/rmvpe/
 assets/pretrained/
 assets/pretrained_v2/
 assets/weights/
+TEMP/rvc-runtime-engine.json
 assets/indices/
 assets/pymss_weights/*.ckpt
 assets/pymss_weights/*.onnx

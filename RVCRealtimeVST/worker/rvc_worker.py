@@ -19,7 +19,14 @@ from pathlib import Path
 # #15") unless this is set before they're imported below. Must be set this
 # early — RVCStreamEngine.__init__'s own os.environ.setdefault() calls run
 # too late relative to interpreter/library init on some launch paths.
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+# Force-set, not setdefault(): a GarageBand-launched child inherits GarageBand's
+# own process environment, which may already define these keys (to values that
+# still crash). setdefault() would then silently keep the inherited value,
+# which is exactly what happened here — the setdefault() version of this fix
+# worked in a bare CLI shell (no inherited OMP_NUM_THREADS) but not when
+# launched from GarageBand. See issue #20's broader "absorb environment
+# differences" ask — this is a concrete instance of it.
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # issue #3/#6: the Windows host (WorkerClient_win.cpp) signals new
 # requests/responses with named Events (WinEvent below). macOS has no
@@ -135,7 +142,10 @@ class RVCStreamEngine:
         self.root = Path(cfg["rvc_root"]).resolve()
         os.chdir(self.root)
         sys.path.insert(0, str(self.root))
-        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+        # Force-set: GarageBand's own process environment may already define
+        # these (see the KMP_DUPLICATE_LIB_OK comment near the top of this
+        # file for why setdefault() alone is not enough here).
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
         # Crash fix (macOS, launched from GarageBand): the process.log for a
         # crashing session showed 2 successful RVCStreamEngine.process() calls
         # (prewarm + first real block) before __kmp_abort_process on the 3rd.
@@ -145,13 +155,21 @@ class RVCStreamEngine:
         # tries to actually spin up >1 worker thread, which OpenMP treats as a
         # fatal, unrecoverable error rather than degrading to fewer threads.
         # Requesting only 1 thread up front avoids that thread creation.
-        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        os.environ["OMP_NUM_THREADS"] = "1"
 
         import librosa
         import numpy as np
         import torch
         import torch.nn.functional as F
         import torchaudio.transforms as tat
+
+        # Belt-and-suspenders alongside the OMP_NUM_THREADS/OPENBLAS_NUM_THREADS
+        # env vars above: torch's own thread pool is a direct API call, not
+        # dependent on whether libiomp5 actually reads those env vars in this
+        # process's launch context (observed to differ between a bare CLI shell
+        # and a GarageBand-launched child, see the comments above).
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
 
         from configs.config import Config
         from infer import rtrvc

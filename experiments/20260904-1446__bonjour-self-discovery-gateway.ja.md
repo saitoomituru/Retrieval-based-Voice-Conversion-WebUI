@@ -88,6 +88,15 @@ WebUI Human Gateと、AUから選択済みself routeへ通るtransport gateは�
 確認時のengine表示は`passthrough`だったため、この観測をBonjour選択後の変換音
 Human Gateには昇格しない。実モデル音声はWebUIでモデルを再適用してから別途確認する。
 
+### 後続仕様更新
+
+利用者の追加要求後も、AUはBonjour browseを一切実行せず、探索は
+WebUI/controllerが所有する。WebUIの検出一覧と選択操作だけをlocalhost control
+API経由でAU GUIへ中継することになった。
+「AU画面に選択機能がないのは仕様」という上の記録は当時点の事実だが、現在仕様では
+AU画面にも`RUNTIME / SCAN / SELECT`を搭載する。後続receiptは
+`experiments/20260904-1500__au-runtime-selection-ui.ja.md`。
+
 ## UNKNOWN / 外部資源
 
 - 別Mac間の実network transport、Wi-Fi断、LAN RTT/drop。

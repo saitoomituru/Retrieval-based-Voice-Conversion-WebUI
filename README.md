@@ -55,7 +55,7 @@ RVC WebUI / controller
   model load、HuBERT、F0、SOLA、RMS、推論
 ```
 
-GarageBandのsandbox内からPythonをspawnする旧案は廃止しました。runtimeが落ちた場合もGarageBandを巻き込まず、WebUI側が所有processだけを再生成します。通常のaudio callbackはnon-blockingを維持し、hostが標準offline propertyを通知した場合だけ、deadlineのないBounceとして推論完了を待ちます。
+GarageBandのsandbox内からPythonをspawnする旧案は廃止しました。runtimeが落ちた場合もGarageBandを巻き込まず、WebUI側が所有processだけを再生成します。AU画面の`RUNTIME / SCAN / SELECT`はWebUIが検出した一覧をlocalhost control APIから取得するだけで、AU自身はBonjour browseしません。通常のaudio callbackはnon-blockingを維持し、hostが標準offline propertyを通知した場合だけ、deadlineのないBounceとして推論完了を待ちます。
 
 ## 現在の製品境界
 

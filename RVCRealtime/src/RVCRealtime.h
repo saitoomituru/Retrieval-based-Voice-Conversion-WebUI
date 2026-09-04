@@ -77,6 +77,9 @@ private:
   void SetModelPath(const char* path);
   void SetIndexPath(const char* path);
   void UpdateFileLabels();
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  void RefreshRuntimeModelLabels();
+#endif
 #if defined(__APPLE__)
   void RescanFileMenus();
 #endif
@@ -92,6 +95,9 @@ private:
   int mDryWritePosition = 0;
   std::atomic<int> mTargetDelayFrames {12480};
   float mActiveBlend = 0.0f;
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  std::atomic<bool> mRuntimeLabelRefreshPending {true};
+#endif
 
   mutable std::mutex mStateMutex;
   WDL_String mModelPath {RVC_DEFAULT_MODEL};

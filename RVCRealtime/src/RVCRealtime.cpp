@@ -795,6 +795,13 @@ void RVCRealtime::OnIdle()
 #if IPLUG_EDITOR
   if (GetUI() == nullptr)
     return;
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  // Presets serialize the stable opaque id, not a machine-local path or a
+  // mutable display name. Resolve the human label on the UI idle thread so
+  // state restoration never performs network I/O on a host/audio callback.
+  if (mRuntimeLabelRefreshPending.exchange(false, std::memory_order_acq_rel))
+    RefreshRuntimeModelLabels();
+#endif
   std::string validationMessage;
   {
     std::lock_guard<std::mutex> lock(mStateMutex);
@@ -827,6 +834,9 @@ void RVCRealtime::OnUIOpen()
 {
   Plugin::OnUIOpen(); // pushes current param values to the UI controls
   UpdateFileLabels();
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  mRuntimeLabelRefreshPending.store(true, std::memory_order_release);
+#endif
 }
 
 bool RVCRealtime::SerializeState(IByteChunk& chunk) const
@@ -859,6 +869,9 @@ int RVCRealtime::UnserializeState(const IByteChunk& chunk, int startPos)
   mWorker.setPath(rvc::kStateIndexPath, index.Get());
   mWorker.setPath(rvc::kStateRvcRoot, root.Get());
   mWorker.setPath(rvc::kStatePythonPath, python.Get());
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  mRuntimeLabelRefreshPending.store(true, std::memory_order_release);
+#endif
   startPos = UnserializeParams(chunk, startPos);
   SyncParametersToWorker();
   UpdateFileLabels();
@@ -984,6 +997,7 @@ void RVCRealtime::SetModelPath(const char* path)
   // The management thread reconnects and sends the opaque id in SESSION_OPEN.
   // Keep the host parameter enabled; no filesystem or network work happens on
   // the audio callback.
+  mRuntimeLabelRefreshPending.store(true, std::memory_order_release);
 #else
   StopEngineForPathChange();
 #endif
@@ -1108,6 +1122,36 @@ void RVCRealtime::UpdateFileLabels()
 #endif
 #endif
 }
+
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+void RVCRealtime::RefreshRuntimeModelLabels()
+{
+#if IPLUG_EDITOR
+  if (GetUI() == nullptr)
+    return;
+  std::string modelId;
+  {
+    std::lock_guard<std::mutex> lock(mStateMutex);
+    modelId = mModelPath.Get();
+  }
+  const rvc::RuntimeChoices choices = rvc::RuntimeControlClient().list();
+  if (!choices.error.empty())
+    return;
+  const auto selected = std::find_if(
+    choices.models.begin(), choices.models.end(),
+    [&modelId](const rvc::RuntimeModel& model) { return model.id == modelId; });
+  if (selected == choices.models.end()) {
+    if (auto* detail = GetUI()->GetControlWithTag(kCtrlStatusDetail))
+      detail->As<ITextControl>()->SetStr("Saved model id is not advertised by this runtime");
+    return;
+  }
+  if (auto* model = GetUI()->GetControlWithTag(kCtrlModelName))
+    model->As<ITextControl>()->SetStr(selected->name.c_str());
+  if (auto* index = GetUI()->GetControlWithTag(kCtrlIndexName))
+    index->As<ITextControl>()->SetStr(selected->index.empty() ? "NONE" : selected->index.c_str());
+#endif
+}
+#endif
 
 // Issue #16: re-point the MODEL/INDEX scan menus at <rvcRoot>/assets/weights and
 // <rvcRoot>/assets/indices (the same relative layout webui.py's weight_root/

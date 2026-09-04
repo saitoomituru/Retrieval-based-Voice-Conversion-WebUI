@@ -75,3 +75,11 @@ WebUIの `rvc_runtime_configure` APIを既存deltamon選択のまま一度実行
 ## Recovery
 
 新component固有の起動障害があればGarageBandを終了し、退避済み `/private/tmp/RVCRealtime.component.pre-model-selector` をuser Audio Unit directoryへ戻せる。
+
+## 保存スロット表示regressionと修正
+
+Human Gate開始時、AUでずんだもんを選んでGarageBandの設定スロットへ保存し、復元するとMODEL欄が表示名ではなく`rvc-d5d27b9ef69f373b`になった。変換用ID自体は正しく保存され、更新前の設定ファイルも有効だった。
+
+原因は、presetへ保存すべきstable opaque IDと、人間へ見せるruntime由来の表示名を同じUI fieldで扱い、state復元後のID→表示名解決を行っていなかったことである。保存形式を表示名へ戻すとrenameやremote runtimeで壊れるため、opaque IDの保存は維持した。
+
+修正では、`UnserializeState`と`OnUIOpen`がatomicな更新要求だけを立て、UI idle threadがlocalhost controllerのmodel catalogから表示名とindex名を再解決する。state復元処理とaudio callbackにはnetwork I/Oを置かない。AU Release build、全Python回帰43件は再度成功した。GarageBandでのスロット保存→復元表示は再Human Gate待ち。

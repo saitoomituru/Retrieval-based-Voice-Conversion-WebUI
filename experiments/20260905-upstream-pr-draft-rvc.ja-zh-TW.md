@@ -1,83 +1,98 @@
 # RVC上流PR草案（日本語・繁體中文）
 
 状態: `DRAFT`（未送信）
-
 対象分岐: `saitoomituru:upstream/macos-au-webui-runtime`
 
 ## 題名
 
-macOS / AUv2対応とWebUI所有realtime runtimeを追加する / 新增macOS、AUv2與WebUI管理的即時runtime
+Intel macOSで学習からGarageBand AUv2まで登攀 / 在Intel macOS從訓練一路登上GarageBand AUv2
 
 ## 本文
 
+WindowsのスクリーンショットしかなかったRVC Realtimeを、Intel Macで学習・推論・GarageBand AUv2まで連れてきました。
+
+![GarageBandでRVC AUv2を使い、伴奏付きmixをoffline bounceしている実機画面](https://raw.githubusercontent.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/main/assets/fusamofu-img/AUv2inside.png)
+
+🎵 [実演動画：ずんだもん・デルタもん・生声で歌う「村祭」](https://youtube.com/shorts/Y91K-4o8xz0)
+
+🔧 [実験、失敗、GarageBand fault-injectionまで全部残した開発fork](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI)
+
+---
+
 ### 日本語
 
-このPRは、Windows向けWebUI・VST実装を基礎に、Intel macOSで学習・推論・GarageBand AUv2まで動作する経路を追加します。
+`RVCRealtimeVST`を共通の`RVCRealtime`へ整理しました。Windowsは従来のVST2/VST3を残し、macOSではAPPとAUv2をbuildします。
 
-主な変更:
+#### 今回できたこと
 
-- `RVCRealtimeVST`を`RVCRealtime`へ改称し、Windowsでは従来のVST2/VST3、macOSではAPP/AUv2をbuildします。
-- AUを薄いC++ audio headとし、Python、PyTorch、model load、Bonjour探索をDAWのaudio threadへ持ち込みません。
-- WebUIがRSVC runner、health、bounded restart、model registry、control gatewayを所有します。音声portは制御面から分離します。
-- WebUIとAUの双方からmodelを選択できます。AUが明示したopaque model IDは、そのAU sessionでWebUI既定より優先されます。
-- BonjourはmacOSの`dns-sd` / mDNSResponderが見せる`.local` serviceを広告・探索・解決します。application独自のCIDRやsegment制限は追加していません。
-- hostのoffline render状態をAUからRSVCへ伝え、GarageBand標準offline bounceでは推論完了を待ちます。
-- macOS x86_64向けPython 3.12依存とCPU学習・推論のplatform差分を追加します。
-- runtime/protocol/lifecycle/Bonjour/model選択にmodel不要の自動テストを追加します。
+- Intel macOS x86_64のCPUで学習・推論
+- 手元でずんだもん・デルタもんの2モデルを実際に学習し、WebUIとAUで変換
+- GarageBandでmodel切替、pitch変更、設定slot復元、標準offline bounce
+- WebUIがRVC engine、model、processの死活を管理し、AUは薄いC++ audio headとしてRSVCへ接続
+- 再生中のruntimeを3回killするlive-host fault-injectionでもGarageBandは生存し、自動再生成・再接続
+- WebUIとAUの双方からmodelを変更可能。AUの明示選択はそのsessionでWebUI既定より優先
+- BonjourはmacOSの`dns-sd` / mDNSResponderをそのまま利用。独自のCIDRやsegment制限は生やさない
+- GarageBandのoffline renderを検出し、CPU推論を待ってプチプチのないbounceを書き出す
 
-検証（Intel Mac、macOS 15.7.7 / Xcode 16.2）:
+Python、PyTorch、model load、Bonjour探索、blocking networkはDAWのaudio threadへ入れていません。制御serviceと死活管理はWebUIへ集め、realtime audio portだけを分離しています。
 
-- push済み分岐を空の一時directoryへ`git clone --recursive`し、全submoduleの固定revision取得を確認
-- `python -m unittest discover -s tests`: 43/43合格（model・再学習不要）
-- clean Release build: `RVCRealtime-app` / `RVCRealtime-au`成功
-- APP / AUのad-hoc `codesign --verify --deep --strict`成功
-- clean buildのcomponentを一時installした`auval -v aufx Rvcr Rvcp`: `AU VALIDATION SUCCEEDED`
-- このforkのIntel Mac環境で2つの歌唱model（ずんだもん・デルタもん）を実際に学習し、model load、WebUI/AU変換、聴感確認まで完走
-- GarageBand実機: model切替、pitch `-12 st`、Bonjour自己route、runtime fault injection後の復旧、offline bounceを確認
-- 単trackと伴奏付きmixのoffline bounceを利用者が聴取し、変換音とdropoutなしを確認
-- 実演動画と詳しい実機記録は[fork](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI)および[YouTube Shorts](https://youtube.com/shorts/Y91K-4o8xz0)を参照
+<details>
+<summary>再現確認</summary>
 
-範囲と制限:
+- 空directoryから`git clone --recursive`成功
+- model不要test: 43/43 pass
+- clean Release APP/AU build成功
+- APP/AU `codesign --verify --deep --strict`成功
+- clean build AU: `auval -v aufx Rvcr Rvcp`成功
+- GarageBand単trackと伴奏付きmixのoffline bounceを実際に聴取し、変換とdropoutなしを確認
 
-- Intel CPUのrealtime再生は推論deadlineを超え、dropoutが発生します。標準offline bounceは合格しています。
-- Windows実機、Apple Silicon、Logic Pro、別Mac間Bonjour、複数clientの排他制御は未確認です。利用できる実機資源がないため、このPRでは保証しません。
-- 学習機能は未確認ではなく、手元で2モデルが実際に完成し動作しています。ただし限られたIntel Mac計算資源で反復再学習する品質保証までは行っていません。clean checkoutでは再学習を省き、既存の学習・実変換記録とmodel不要の再現可能なdry-runを分離しています。
-- この2モデル、学習音声、indexは第三者の著作権・利用条件に関わるためPRへ含めず、再配布可能とも主張しません。動画は汎用codeの実動証拠であり、model配布物ではありません。
-- Bonjour到達範囲とnetwork分離はOS、router、VLAN、mDNS reflectorの設定へ委ねます。このlocal-production設計はSaaSのtenant分離を目的にしません。
-- iPlug2はMIDI I/OなしAPP初期化修正を含むfork revisionを参照します。この1-file修正はiPlug2へ別PRとして提出予定です。
+</details>
+
+#### 今回持っていない機材
+
+- Intel CPUのrealtime再生は演算が間に合わずプチプチします。GarageBand標準offline bounceなら綺麗に書き出せます。
+- Windows実機、Apple Silicon、Logic Pro、2台目のMacは手元にないので、そこは持っている人に遊んでもらいたいです。
+- 2モデルの学習は成功しましたが、この低火力Intel Macで何度も煮直す反復trainingはしていません。
+- model、学習音声、indexはそれぞれの著作権・利用条件があるのでPRには載せません。上の動画はcodeの実演で、model配布ではありません。
+- iPlug2はMIDI I/OなしAPPの初期化を直したforkを参照しています。この1-file patchはiPlug2側へ別に投げます。
+
+---
 
 ### 繁體中文
 
-此PR以既有的Windows WebUI與VST實作為基礎，新增可在Intel macOS上完成訓練、推論及GarageBand AUv2處理的路徑。
+原本只看到Windows畫面的RVC Realtime，這次在Intel Mac上從訓練、推論一路跑進GarageBand AUv2。
 
-主要變更：
+`RVCRealtimeVST`整理為共用的`RVCRealtime`。Windows維持原本的VST2/VST3；macOS新增APP與AUv2 build。
 
-- 將`RVCRealtimeVST`重新命名為`RVCRealtime`；Windows維持VST2/VST3，macOS建置APP與AUv2。
-- AU採用輕量C++ audio head，不在DAW audio thread內執行Python、PyTorch、模型載入或Bonjour探索。
-- WebUI負責RSVC runner、健康檢查、有限次重啟、模型登錄與control gateway；音訊port與控制面分離。
-- WebUI與AU皆可選擇模型。AU明確指定的opaque model ID只在該AU session內優先於WebUI預設值。
-- Bonjour直接使用macOS的`dns-sd` / mDNSResponder來公告、探索與解析`.local`服務；應用程式不另加CIDR或網段限制。
-- AU將host的offline render狀態傳至RSVC；GarageBand標準offline bounce會等待推論完成。
-- 新增macOS x86_64的Python 3.12依賴，以及CPU訓練與推論的platform差異處理。
-- 新增不需模型的runtime、protocol、lifecycle、Bonjour與模型選擇自動測試。
+#### 這次完成的事
 
-驗證（Intel Mac、macOS 15.7.7 / Xcode 16.2）：
+- 在Intel macOS x86_64的CPU上訓練與推論
+- 本地實際訓練ずんだもん與デルタもん兩個模型，並在WebUI與AU完成轉換
+- 在GarageBand完成模型切換、pitch調整、設定slot還原與標準offline bounce
+- WebUI管理RVC engine、模型與process生命週期；AU作為輕量C++ audio head連接RSVC
+- 播放中連續三次kill runtime的live-host fault-injection，GarageBand仍然存活，runtime可自動重建並重新連線
+- WebUI與AU都能切換模型；AU明確選擇在該session內優先於WebUI預設值
+- Bonjour直接使用macOS的`dns-sd` / mDNSResponder，不另外長出CIDR或網段限制
+- 偵測GarageBand offline render，等待CPU推論完成，輸出沒有爆音的bounce
 
-- 將已推送分支以`git clone --recursive`取得至空白暫存目錄，確認所有submodule固定revision皆可取得
-- `python -m unittest discover -s tests`：43/43通過，不需模型或重新訓練
-- clean Release build：`RVCRealtime-app`與`RVCRealtime-au`成功
-- APP / AU的ad-hoc `codesign --verify --deep --strict`成功
-- 暫時安裝clean build component後執行`auval -v aufx Rvcr Rvcp`：`AU VALIDATION SUCCEEDED`
-- 已在此fork的Intel Mac環境實際訓練完成兩個歌唱模型（ずんだもん與デルタもん），並完成模型載入、WebUI/AU轉換及人工聆聽確認
-- GarageBand實機確認：模型切換、pitch `-12 st`、Bonjour自我route、runtime fault injection後復原及offline bounce
-- 使用者實際聆聽單軌與含伴奏mix的offline bounce，確認轉換有效且無dropout
-- 示範影片與詳細實機記錄請參閱[fork](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI)及[YouTube Shorts](https://youtube.com/shorts/Y91K-4o8xz0)
+Python、PyTorch、模型載入、Bonjour探索及blocking network都不放進DAW audio thread。控制service與process生命週期集中在WebUI，只有realtime audio使用獨立port。
 
-範圍與限制：
+<details>
+<summary>重現確認</summary>
 
-- Intel CPU即時播放會超過推論deadline並產生dropout；標準offline bounce已通過。
-- Windows實機、Apple Silicon、Logic Pro、兩台Mac間Bonjour及多client互斥尚未驗證。因缺少對應實機資源，本PR不提供這些保證。
-- 訓練功能並非未驗證：本地已完成且可使用兩個模型。但受限於Intel Mac計算資源，尚未進行多次重新訓練的完整品質保證。clean checkout不重做訓練，並將既有訓練／實際轉換記錄與不需模型、可重現的dry-run分開管理。
-- 這兩個模型、訓練音訊與index涉及第三方著作權及使用條款，因此不包含於本PR，也不宣稱可以再散布。影片僅作為通用程式碼實際運作的證據，不是模型發行物。
-- Bonjour可達範圍與網路隔離交由OS、router、VLAN及mDNS reflector設定。本local-production設計不以SaaS tenant隔離為目標。
-- iPlug2目前指向含「無MIDI I/O APP初始化修正」的fork revision；此單一檔案修正預計另行向iPlug2提出PR。
+- 從空白目錄執行`git clone --recursive`成功
+- 不需模型的test：43/43通過
+- clean Release APP/AU build成功
+- APP/AU通過`codesign --verify --deep --strict`
+- clean build AU通過`auval -v aufx Rvcr Rvcp`
+- 實際聆聽GarageBand單軌及含伴奏mix的offline bounce，確認轉換有效且沒有dropout
+
+</details>
+
+#### 這次手上沒有的機材
+
+- Intel CPU即時播放運算不及，會出現爆音；GarageBand標準offline bounce可以平順輸出。
+- 手邊沒有Windows實機、Apple Silicon、Logic Pro及第二台Mac，歡迎有機材的人繼續玩。
+- 兩個模型都已成功訓練，但沒有在這台低效能Intel Mac上反覆重訓很多次。
+- 模型、訓練音訊與index各有著作權及使用條款，所以不放進PR。上面的影片是程式碼實演，不是模型發行物。
+- iPlug2目前指向已修正「無MIDI I/O APP初始化」的fork；這個1-file patch會另外送往iPlug2。

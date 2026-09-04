@@ -1,6 +1,6 @@
 [submodule "RVCRealtime/third_party/iPlug2"]
 	path = RVCRealtime/third_party/iPlug2
-	url = https://github.com/iPlug2/iPlug2.git
+	url = https://github.com/saitoomituru/iPlug2.git
 [submodule "RVCRealtime/third_party/vst3sdk"]
 	path = RVCRealtime/third_party/vst3sdk
 	url = https://github.com/steinbergmedia/vst3sdk.git

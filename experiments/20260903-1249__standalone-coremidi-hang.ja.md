@@ -44,14 +44,15 @@ GarageBand実機フリッカリングとは無関係と判断した。
 
 `third_party/iPlug2/IPlug/APP/IPlugAPP_host.cpp`の`InitMidi()`へ、
 `#if !PLUG_DOES_MIDI_IN && !PLUG_DOES_MIDI_OUT`の場合は即座に`return true`
-するガードを追加した(**このrepositoryのsubmoduleへの直接編集、後述の
-永続化課題あり**)。
+するガードを追加した。修正はiPlug2 forkの
+`fix/skip-midi-init-without-midi` branchへcommitし、このrepositoryの
+submoduleをそのcommitへ固定した。
 
 ## 実行コマンド
 
 ```text
 sample <hung_pid> 3 -f /tmp/rvc-app-hang-sample.txt
-# third_party/iPlug2/IPlug/APP/IPlugAPP_host.cppを編集
+# iPlug2 forkでIPlug/APP/IPlugAPP_host.cppを編集
 cmake --build build-macos --target RVCRealtime-app --config Debug
 open build-macos/out/Debug/RVCRealtime.app
 sample <new_pid> 2 -f /tmp/rvc-app-fixed-sample.txt
@@ -62,24 +63,30 @@ sample <new_pid> 2 -f /tmp/rvc-app-fixed-sample.txt
 修正後、メインスレッドは`NSApplication run`(通常のCocoaイベントループ)に
 到達しており、ハングは解消された。
 
-## 課題: submoduleへの直接編集は通常のgit commitで追跡されない
+## 恒久化
 
-`third_party/iPlug2`はpinされたcommitを参照するsubmoduleであり、この
-リポジトリの`git add`/`git commit`では中身の変更を追跡できない。
-`git submodule update --init`をやり直すと消える。今回はこのセッション内の
-テスト用に一時的な編集として残すが、恒久化する場合は以下のいずれかを
-検討する必要がある。
+修正は次へ保存した。
 
-- docs/macos-build.ja.mdへ手動パッチ手順として明記し、都度手動適用する
-- `scripts/build-macos.sh`にsubmodule初期化後の自動パッチ適用ステップを追加する
-- 上流iPlug2側へPLUG_DOES_MIDI_IN/OUTに基づくガードをPRとして提案する
+- fork: `https://github.com/saitoomituru/iPlug2`
+- branch: `fix/skip-midi-init-without-midi`
+- commit: `256bd6b62b7a2bcdc30acdd5a33b4b3e132a4d0f`
+- 親repository: `.gitmodules`をfork URLへ変更し、上記commitをpin
+
+親repository内へ一時パッチを重複保持せず、iPlug2上流へ独立してPRできる
+境界にした。修正後は次のRelease buildを再実行し、いずれも成功した。
+
+```text
+cmake --build RVCRealtime/build-macos --config Release --target RVCRealtime-app
+cmake --build RVCRealtime/build-macos --config Release --target RVCRealtime-au
+```
 
 ## Recovery / 次の一手
 
 この修正はissue #6のGarageBandフリッカリングの原因究明とは別件。
-引き続きGarageBand実機での`diagnostic.log`確認を進める。
+iPlug2上流へ提出する場合は、MIDI I/Oを持たないAPP targetでCoreMIDIを
+初期化しない一般修正としてPRを作成する。
 
 ## unknown
 
 - このCoreMIDI不具合がこのマシン固有か、より一般的なmacOS環境要因か
-- 永続化方法の最終決定(まだ未実施)
+- iPlug2上流での受入可否

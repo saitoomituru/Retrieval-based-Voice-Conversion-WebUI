@@ -44,8 +44,11 @@ binaryから分離する。元projectは変更しない。
    cloneだけで`WindowImage.jpg`を退避しても、GarageBand起動はsignal 11で終了した。
    ただし自動再オープンが元projectへ先行した可能性を排除できないため、画像破損説を
    完全否定する試験にはならない。
-7. 調査時点ではWebUI control port `127.0.0.1:17864`も停止していた。これは
-   GarageBand crash stackとは別であり、Human Gate再開前にrunner再起動が必要である。
+7. sandbox内curlではWebUI control portを確認できなかったが、これはnetwork制約による
+   偽陰性だった。host側ではWebUI PID 35708が`7865`、control `17864`、gateway
+   `17865`をlistenし、runner PID 35732がengine `17866`をlistenしていた。二重起動も
+   `17865: Address already in use`で停止した。host側APIはLocalhost選択、gateway稼働、
+   Bonjour self 1件を返した。
 
 ## 解釈
 
@@ -80,7 +83,8 @@ AppleのGarageBand診断順に沿い、次の順でHuman Gateを再開する。
 `host-failure / RVC-direct-cause-not-supported / workaround-proposed / human-retest-required`
 
 RVC repositoryのsource修正対象は検出しなかったため、クラッシュに合わせたAU code変更は
-行わない。Human GateはGarageBandを手動で開けた後、runtimeを再起動して再開する。
+行わない。WebUI/runtimeは生存しており、Human GateはGarageBandを手動で開けた後に
+そのまま再開できる。
 
 ## unknown / 再開条件
 
@@ -88,4 +92,3 @@ RVC repositoryのsource修正対象は検出しなかったため、クラッシ
 - GarageBand fresh launch、空project、Audio Units無効の各対照結果
 - 元project複製を自動再オープンなしで開いた結果
 - 修正版runtimeに対するLocalhost / Bonjour self / offline bounceの人間聴感
-

@@ -38,28 +38,50 @@ class RsvcGateway:
         self._target = target
         self._connect_timeout = connect_timeout
         self._lock = threading.Lock()
+        self._route_generation = 0
+        self._active_sessions = 0
+        self._active_sockets: set[socket.socket] = set()
         self._stop_event = threading.Event()
         self._listener: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
 
     def select(self, target: RuntimeTarget) -> None:
-        """新規sessionの転送先を明示変更する。既存sessionは移動させない。"""
+        """転送先を明示変更し、既存sessionを閉じてAUへ再接続させる。"""
 
         with self._lock:
             self._target = target
+            self._route_generation += 1
+            active = tuple(self._active_sockets)
+        # A TCP stream cannot be moved to another peer.  Closing both halves is
+        # the explicit route-change signal; the AU management thread reconnects
+        # to the fixed localhost gateway without involving its audio callback.
+        for connection in active:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def target(self) -> RuntimeTarget:
         with self._lock:
             return self._target
 
+    def _route(self) -> tuple[RuntimeTarget, int]:
+        with self._lock:
+            return self._target, self._route_generation
+
     def snapshot(self) -> dict[str, object]:
-        target = self.target()
+        with self._lock:
+            target = self._target
+            active_sessions = self._active_sessions
+            generation = self._route_generation
         return {
             "endpoint": f"{self.host}:{self.port}",
             "target_identity": target.identity,
             "target": f"{target.host}:{target.port}",
             "target_label": target.label,
             "local": target.local,
+            "route_generation": generation,
+            "active_sessions": active_sessions,
             "running": self._thread is not None and self._thread.is_alive(),
         }
 
@@ -88,34 +110,54 @@ class RsvcGateway:
                 continue
             except OSError:
                 break
-            target = self.target()
+            target, generation = self._route()
             threading.Thread(
                 target=self._forward,
-                args=(client, target),
+                args=(client, target, generation),
                 daemon=True,
                 name="rsvc-gateway-session",
             ).start()
 
-    def _forward(self, client: socket.socket, target: RuntimeTarget) -> None:
+    def _forward(
+        self, client: socket.socket, target: RuntimeTarget, generation: int
+    ) -> None:
         with client:
+            with self._lock:
+                if generation != self._route_generation:
+                    return
+                self._active_sockets.add(client)
+                self._active_sessions += 1
             try:
                 backend = socket.create_connection(
                     (target.host, target.port), timeout=self._connect_timeout
                 )
             except OSError:
+                with self._lock:
+                    self._active_sockets.discard(client)
+                    self._active_sessions -= 1
                 return
-            with backend:
-                client.settimeout(None)
-                backend.settimeout(None)
-                upload = threading.Thread(
-                    target=self._pump,
-                    args=(client, backend),
-                    daemon=True,
-                    name="rsvc-gateway-upload",
-                )
-                upload.start()
-                self._pump(backend, client)
-                upload.join(timeout=1.0)
+            try:
+                with backend:
+                    with self._lock:
+                        if generation != self._route_generation:
+                            return
+                        self._active_sockets.add(backend)
+                    client.settimeout(None)
+                    backend.settimeout(None)
+                    upload = threading.Thread(
+                        target=self._pump,
+                        args=(client, backend),
+                        daemon=True,
+                        name="rsvc-gateway-upload",
+                    )
+                    upload.start()
+                    self._pump(backend, client)
+                    upload.join(timeout=1.0)
+            finally:
+                with self._lock:
+                    self._active_sockets.discard(client)
+                    self._active_sockets.discard(backend)
+                    self._active_sessions -= 1
 
     @staticmethod
     def _pump(source: socket.socket, destination: socket.socket) -> None:
@@ -135,6 +177,13 @@ class RsvcGateway:
 
     def stop(self) -> None:
         self._stop_event.set()
+        with self._lock:
+            active = tuple(self._active_sockets)
+        for connection in active:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
         listener = self._listener
         self._listener = None
         if listener is not None:
@@ -142,4 +191,3 @@ class RsvcGateway:
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=1.0)
         self._thread = None
-

@@ -121,6 +121,31 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(supervisor.snapshot()["pid"], 1002)
             supervisor.stop()
 
+    def test_persisted_engine_configuration_is_used_on_initial_spawn(self):
+        commands = []
+        process = FakeProcess()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "rvc_runtime_service.py").write_text("", encoding="utf-8")
+            config = root / "engine.json"
+            config.write_text("{}", encoding="utf-8")
+
+            def spawn(command, **_kwargs):
+                commands.append(command)
+                return process
+
+            supervisor = RvcRuntimeSupervisor(
+                root,
+                engine_config=config,
+                probe=lambda *_args, **_kwargs: ProbeResult("unavailable", "missing"),
+                popen=spawn,
+            )
+            supervisor.ensure_running()
+            self.assertIn("--engine-config", commands[0])
+            self.assertEqual(commands[0][-1], str(config.resolve()))
+            self.assertEqual(supervisor.snapshot()["engine"], "rvc")
+            supervisor.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

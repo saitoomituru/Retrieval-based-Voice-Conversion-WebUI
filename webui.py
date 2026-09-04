@@ -104,11 +104,19 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 _runtime_bind_host = "0.0.0.0" if platform.system() == "Darwin" else "127.0.0.1"
+# TEMP is deliberately cleared on every WebUI launch.  Keep the last explicit
+# AU model choice in the ignored runtime log area so restart does not silently
+# fall back to the passthrough engine.
+_runtime_engine_config = Path(now_dir) / "logs" / "rvc-runtime-engine.json"
 rvc_runtime_supervisor = RvcRuntimeSupervisor(
     Path(now_dir),
     python_executable=sys.executable,
     stream_port=DEFAULT_BACKEND_PORT,
     stream_bind_host=_runtime_bind_host,
+    # The file is written only by the explicit "選択音色をAUへ適用" action.
+    # Reusing it preserves that human choice across a WebUI restart; it does
+    # not silently select an arbitrary model from assets/weights.
+    engine_config=_runtime_engine_config if _runtime_engine_config.is_file() else None,
 )
 rvc_runtime_bonjour = BonjourRuntimeDirectory(Path(now_dir), DEFAULT_BACKEND_PORT)
 rvc_runtime_gateway = RsvcGateway(rvc_runtime_bonjour.local_target())
@@ -325,7 +333,8 @@ def configure_rvc_runtime(model_name, file_index):
         "model_path": str(model_path),
         "index_path": str(Path(index_path).resolve()) if index_path else "",
     }
-    config_path = Path(tmp) / "rvc-runtime-engine.json"
+    config_path = _runtime_engine_config
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     pending_path = config_path.with_suffix(".json.tmp")
     pending_path.write_text(
         json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n",

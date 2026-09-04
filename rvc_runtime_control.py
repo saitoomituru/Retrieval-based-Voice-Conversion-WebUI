@@ -4,17 +4,68 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import struct
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, unquote
 
 from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
 from rvc_runtime_gateway import RsvcGateway
+from rvc_stream_protocol import HEADER, Frame, FrameType, pack_frame, unpack_frame
 
 
 DEFAULT_CONTROL_HOST = "127.0.0.1"
 DEFAULT_CONTROL_PORT = 17864
 MAX_REQUEST_BYTES = 4096
+
+
+def _recv_exact(connection: socket.socket, size: int) -> bytes:
+    data = bytearray()
+    while len(data) < size:
+        chunk = connection.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("runtime closed during model discovery")
+        data.extend(chunk)
+    return bytes(data)
+
+
+def _probe_runtime_models(host: str, port: int) -> list[dict[str, str]]:
+    """Read the selected runtime's public model catalog through RSVC HELLO."""
+
+    name = b"WebUI control"
+    hello = struct.pack("<HHIBBH", 1, 1, 0, 1, 0, len(name)) + name
+    version = b"v1"
+    hello += struct.pack("<H", len(version)) + version
+    with socket.create_connection((host, port), timeout=0.75) as connection:
+        connection.settimeout(0.75)
+        connection.sendall(pack_frame(Frame(FrameType.HELLO, hello)))
+        header = _recv_exact(connection, HEADER.size)
+        payload_size = struct.unpack_from("<I", header, 16)[0]
+        response = unpack_frame(header + _recv_exact(connection, payload_size))
+    if response.frame_type is not FrameType.HELLO_ACK:
+        raise ValueError("runtime rejected model discovery")
+    if len(response.payload) < 26:
+        raise ValueError("short HELLO_ACK")
+    name_size = struct.unpack_from("<H", response.payload, 24)[0]
+    offset = 26 + name_size
+    if offset + 2 > len(response.payload):
+        raise ValueError("HELLO_ACK has no capabilities")
+    caps_size = struct.unpack_from("<H", response.payload, offset)[0]
+    offset += 2
+    if offset + caps_size != len(response.payload):
+        raise ValueError("invalid HELLO_ACK capabilities")
+    caps = json.loads(response.payload[offset:offset + caps_size].decode("utf-8"))
+    models = caps.get("models", [])
+    return [
+        {
+            "id": str(model["id"]),
+            "name": str(model.get("name", model["id"])),
+            "index": str(model.get("index", "")),
+        }
+        for model in models
+        if isinstance(model, dict) and model.get("id")
+    ]
 
 
 class RuntimeRouterControl:
@@ -59,6 +110,7 @@ class RuntimeRouterControl:
             service.identity == target.identity for service in self.directory.services()
         )
         engine = {"model": "", "index": ""}
+        models = []
         if self.engine_config_path is not None:
             try:
                 with open(self.engine_config_path, encoding="utf-8") as handle:
@@ -67,8 +119,41 @@ class RuntimeRouterControl:
                     "model": os.path.basename(str(config.get("model_path", ""))),
                     "index": os.path.basename(str(config.get("index_path", ""))),
                 }
+                catalog = config.get("models", [])
+                default_id = str(config.get("default_model_id", ""))
+                default = next(
+                    (entry for entry in catalog if str(entry.get("id", "")) == default_id),
+                    {},
+                )
+                models = [{
+                    "id": "active",
+                    "name": f"WebUI default: {default.get('name', engine['model'])}",
+                    "index": os.path.basename(str(default.get("index_path", engine["index"]))),
+                }]
+                models.extend(
+                    {
+                        "id": str(entry["id"]),
+                        "name": str(entry.get("name", entry["id"])),
+                        "index": os.path.basename(str(entry.get("index_path", ""))),
+                    }
+                    for entry in catalog
+                    if isinstance(entry, dict) and entry.get("id")
+                )
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
                 pass
+        try:
+            probed_models = _probe_runtime_models(target.host, target.port)
+            if probed_models:
+                models = probed_models
+                active = next(
+                    (model for model in models if model["id"] == "active"), models[0]
+                )
+                engine = {
+                    "model": active["name"].removeprefix("WebUI default: "),
+                    "index": active.get("index", ""),
+                }
+        except (ConnectionError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            pass
         return {
             "protocol": 1,
             "selected": selected,
@@ -77,6 +162,7 @@ class RuntimeRouterControl:
             "gateway": self.gateway.snapshot(),
             "bonjour": self.directory.status_text(),
             "engine": engine,
+            "models": models,
         }
 
     def start(self) -> None:
@@ -103,6 +189,14 @@ class RuntimeRouterControl:
                         "index\t" + quote(str(snapshot["engine"]["index"]), safe=""),
                     ]
                     lines.extend("choice\t" + quote(choice, safe="") for choice in snapshot["choices"])
+                    lines.extend(
+                        "model-choice\t{}\t{}\t{}".format(
+                            quote(model["id"], safe=""),
+                            quote(model["name"], safe=""),
+                            quote(model.get("index", ""), safe=""),
+                        )
+                        for model in snapshot["models"]
+                    )
                     body = ("\n".join(lines) + "\n").encode("ascii")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/plain; charset=us-ascii")

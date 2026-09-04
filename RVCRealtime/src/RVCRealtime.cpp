@@ -290,8 +290,11 @@ private:
 class RVCRuntimeMenuControl final : public IControl
 {
 public:
-  explicit RVCRuntimeMenuControl(const IRECT& bounds)
+  using SelectionFunc = std::function<void(const char*)>;
+
+  explicit RVCRuntimeMenuControl(const IRECT& bounds, SelectionFunc onRuntimeChanged)
   : IControl(bounds)
+  , mOnRuntimeChanged(std::move(onRuntimeChanged))
   {
   }
 
@@ -348,6 +351,8 @@ public:
     if (mClient.select(mChoices[static_cast<size_t>(index)], error)) {
       mDisplay = mChoices[static_cast<size_t>(index)];
       mDetail = "Selected via 127.0.0.1:17864; new sessions use this engine";
+      if (mOnRuntimeChanged)
+        mOnRuntimeChanged("active");
     } else {
       mDisplay = "RUNTIME SELECT FAILED";
       mDetail = error;
@@ -361,6 +366,74 @@ private:
   std::vector<std::string> mChoices;
   std::string mDisplay {"CLICK SCAN / SELECT"};
   std::string mDetail {"WebUI owns Bonjour discovery; AU requests the shared list"};
+  SelectionFunc mOnRuntimeChanged;
+};
+
+class RVCModelMenuControl final : public IControl
+{
+public:
+  using SelectionFunc = std::function<void(const char*)>;
+
+  RVCModelMenuControl(const IRECT& bounds, SelectionFunc onSelect)
+  : IControl(bounds)
+  , mOnSelect(std::move(onSelect))
+  {
+  }
+
+  void Draw(IGraphics& graphics) override
+  {
+    graphics.FillRect(kAccent, mRECT);
+    graphics.DrawText(IText(14.f, kText, "Roboto-Regular"), "\xE2\x96\xBE", mRECT);
+  }
+
+  void OnMouseDown(float, float, const IMouseMod&) override
+  {
+    const rvc::RuntimeChoices result = mClient.list();
+    if (!result.error.empty() || result.models.empty()) {
+      if (auto* detail = GetUI()->GetControlWithTag(kCtrlStatusDetail))
+        detail->As<ITextControl>()->SetStr(
+          result.error.empty() ? "Selected runtime exposes no models" : result.error.c_str());
+      SetDirty(false);
+      return;
+    }
+    mModels = result.models;
+    mMenu.Clear();
+    for (const auto& model : mModels)
+      mMenu.AddItem(model.name.c_str());
+    GetUI()->CreatePopupMenu(*this, mMenu, mRECT);
+    SetDirty(false);
+  }
+
+  void OnPopupMenuSelection(IPopupMenu* menu, int) override
+  {
+    if (menu == nullptr || menu->GetChosenItem() == nullptr) {
+      SetDirty(false);
+      return;
+    }
+    const int index = menu->GetChosenItemIdx();
+    if (index < 0 || index >= static_cast<int>(mModels.size())) {
+      SetDirty(false);
+      return;
+    }
+    const auto& model = mModels[static_cast<size_t>(index)];
+    if (mOnSelect)
+      mOnSelect(model.id.c_str());
+    if (auto* label = GetUI()->GetControlWithTag(kCtrlModelName))
+      label->As<ITextControl>()->SetStr(model.name.c_str());
+    if (auto* label = GetUI()->GetControlWithTag(kCtrlIndexName))
+      label->As<ITextControl>()->SetStr(model.index.empty() ? "NONE" : model.index.c_str());
+    if (auto* detail = GetUI()->GetControlWithTag(kCtrlStatusDetail))
+      detail->As<ITextControl>()->SetStr(
+        model.id == "active" ? "AU follows the WebUI default model"
+                             : "AU session model overrides the WebUI default");
+    SetDirty(false);
+  }
+
+private:
+  rvc::RuntimeControlClient mClient;
+  IPopupMenu mMenu {"RVC runtime models"};
+  std::vector<rvc::RuntimeModel> mModels;
+  SelectionFunc mOnSelect;
 };
 #endif
 
@@ -387,7 +460,10 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
   // The localhost runtime owns filesystem paths. Keep the serialized field for
   // Windows/preset compatibility, but give a fresh macOS thin head the runtime's
   // stable default model id instead of requiring a local .pth path.
-  if (mModelPath.GetLength() == 0)
+  const std::string storedModel = mModelPath.Get();
+  if (storedModel.empty() || storedModel.find('/') != std::string::npos
+      || storedModel.find('\\') != std::string::npos
+      || (storedModel.size() > 4 && storedModel.substr(storedModel.size() - 4) == ".pth"))
     mModelPath.Set("active");
 #endif
   if (mPythonPath.GetLength() == 0 && mRvcRoot.GetLength() > 0) {
@@ -486,18 +562,27 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
 #if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
     graphics->AttachControl(new ITextControl(IRECT(30, 100, 92, 178), "RUNTIME",
                                               IText(13.f, kMuted, "Roboto-Regular", EAlign::Near)));
-    graphics->AttachControl(new RVCRuntimeMenuControl(IRECT(96, 100, 750, 178)), kCtrlRuntimeMenu);
+    graphics->AttachControl(new RVCRuntimeMenuControl(
+      IRECT(96, 100, 750, 178), [this](const char* modelId) { SetModelPath(modelId); }),
+      kCtrlRuntimeMenu);
     auto attachRuntimeOwnedRow = [&](const float y, const char* label, const int textTag,
                                      const char* initial) {
       const float rowHeight = 36.f;
       graphics->AttachControl(new ITextControl(IRECT(30, y, 140, y + rowHeight), label,
                                                 IText(12.f, kMuted, "Roboto-Regular", EAlign::Near)));
-      graphics->AttachControl(new IPanelControl(IRECT(144, y, 750, y + rowHeight), kPanel));
-      graphics->AttachControl(new ITextControl(IRECT(158, y, 738, y + rowHeight), initial,
+      const bool modelRow = textTag == kCtrlModelName;
+      const float panelRight = modelRow ? 700.f : 750.f;
+      graphics->AttachControl(new IPanelControl(IRECT(144, y, panelRight, y + rowHeight), kPanel));
+      graphics->AttachControl(new ITextControl(IRECT(158, y, panelRight - 12.f, y + rowHeight), initial,
                                                 IText(12.f, kText, "Roboto-Regular", EAlign::Near)), textTag);
+      if (modelRow) {
+        graphics->AttachControl(new RVCModelMenuControl(
+          IRECT(706, y, 750, y + rowHeight), [this](const char* modelId) { SetModelPath(modelId); }),
+          kCtrlRuntimeModelMenu);
+      }
     };
-    attachRuntimeOwnedRow(184.f, "MODEL (WEBUI)", kCtrlModelName, "SCAN RUNTIME TO REFRESH");
-    attachRuntimeOwnedRow(226.f, "INDEX (WEBUI)", kCtrlIndexName, "SCAN RUNTIME TO REFRESH");
+    attachRuntimeOwnedRow(184.f, "MODEL", kCtrlModelName, "SELECT RUNTIME MODEL");
+    attachRuntimeOwnedRow(226.f, "INDEX", kCtrlIndexName, "MODEL-OWNED INDEX");
 #else
     attachFileRow(100.f, "RVC ROOT", kCtrlRvcRoot, PathRow::RvcRoot);
     attachFileRow(142.f, "PYTHON", kCtrlPythonPath, PathRow::Python);
@@ -506,7 +591,7 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
 #endif
     graphics->AttachControl(new ITextControl(IRECT(96, 266, 750, 290),
 #if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
-                                              "Model and index are owned by the WebUI runtime",
+                                              "WebUI default; explicit AU model wins for this session",
 #else
                                               "Select RVC root and Python runtime",
 #endif
@@ -878,7 +963,13 @@ void RVCRealtime::SetModelPath(const char* path)
     mModelPath.Set(path);
   }
   mWorker.setPath(rvc::kStateModelPath, path);
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  // The management thread reconnects and sends the opaque id in SESSION_OPEN.
+  // Keep the host parameter enabled; no filesystem or network work happens on
+  // the audio callback.
+#else
   StopEngineForPathChange();
+#endif
   UpdateFileLabels();
 }
 

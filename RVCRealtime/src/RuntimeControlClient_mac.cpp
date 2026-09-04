@@ -154,6 +154,24 @@ RuntimeChoices RuntimeControlClient::list() const
     } else {
       const size_t tab = line.find('\t');
       if (tab != std::string::npos) {
+        if (line.compare(0, tab, "model-choice") == 0) {
+          const size_t nameTab = line.find('\t', tab + 1);
+          const size_t indexTab = nameTab == std::string::npos
+            ? std::string::npos : line.find('\t', nameTab + 1);
+          rvc::RuntimeModel model;
+          if (nameTab == std::string::npos || indexTab == std::string::npos
+              || !percentDecode(line.substr(tab + 1, nameTab - tab - 1), model.id)
+              || !percentDecode(line.substr(nameTab + 1, indexTab - nameTab - 1), model.name)
+              || !percentDecode(line.substr(indexTab + 1), model.index)) {
+            result.error = "invalid runtime model encoding";
+            return result;
+          }
+          result.models.push_back(std::move(model));
+          if (end == std::string::npos)
+            break;
+          start = end + 1;
+          continue;
+        }
         std::string decoded;
         if (!percentDecode(line.substr(tab + 1), decoded)) {
           result.error = "invalid runtime name encoding";

@@ -41,7 +41,8 @@ enum EControlTags {
   kCtrlRenderMode,
   kCtrlModelMenu,
   kCtrlIndexMenu,
-  kCtrlRuntimeMenu
+  kCtrlRuntimeMenu,
+  kCtrlRuntimeModelMenu
 #endif
 };
 

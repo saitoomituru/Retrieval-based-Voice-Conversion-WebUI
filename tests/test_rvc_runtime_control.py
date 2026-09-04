@@ -4,6 +4,7 @@ from urllib.parse import quote
 import unittest
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
 from rvc_runtime_control import RuntimeRouterControl
@@ -68,6 +69,13 @@ class RuntimeRouterControlTest(unittest.TestCase):
                 json.dumps({
                     "model_path": "/models/singer.pth",
                     "index_path": "/indices/singer.index",
+                    "default_model_id": "rvc-singer",
+                    "models": [{
+                        "id": "rvc-singer",
+                        "name": "singer.pth",
+                        "model_path": "/models/singer.pth",
+                        "index_path": "/indices/singer.index",
+                    }],
                 }),
                 encoding="utf-8",
             )
@@ -75,12 +83,17 @@ class RuntimeRouterControlTest(unittest.TestCase):
                 self.directory, self.gateway, port=0, engine_config_path=config
             )
             self.control.start()
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{self.control.port}/v1/runtimes.txt", timeout=1
-            ) as response:
-                body = response.read().decode("ascii")
+            with mock.patch(
+                "rvc_runtime_control._probe_runtime_models", side_effect=OSError
+            ):
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{self.control.port}/v1/runtimes.txt", timeout=1
+                ) as response:
+                    body = response.read().decode("ascii")
             self.assertIn("model\tsinger.pth", body)
             self.assertIn("index\tsinger.index", body)
+            self.assertIn("model-choice\tactive\tWebUI%20default%3A%20singer.pth\tsinger.index", body)
+            self.assertIn("model-choice\trvc-singer\tsinger.pth\tsinger.index", body)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import time
 import unittest
 
 from rvc_runtime_service import Runtime, recv_frame, serve_client
-from rvc_stream_protocol import Frame, FrameType, pack_audio, pack_frame, unpack_audio
+from rvc_stream_protocol import AUDIO_FLAG_OFFLINE, Frame, FrameType, pack_audio, pack_frame, unpack_audio
 
 
 def text(value: str) -> bytes:
@@ -57,6 +57,56 @@ class RuntimeServiceTest(unittest.TestCase):
         client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
         worker.join(1)
         self.assertFalse(worker.is_alive())
+
+    def test_offline_flag_is_preserved_in_audio_response(self):
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        worker = threading.Thread(target=serve_client, args=(server, Runtime()), daemon=True)
+        worker.start()
+        session_id = open_session(client)
+        payload = pack_audio(48000, [0.0] * 8, flags=AUDIO_FLAG_OFFLINE)
+        client.sendall(pack_frame(Frame(FrameType.AUDIO_IN, payload, session_id, 1)))
+        response = recv_frame(client)
+        self.assertEqual(response.frame_type, FrameType.AUDIO_OUT)
+        self.assertEqual(unpack_audio(response.payload)[3], AUDIO_FLAG_OFFLINE)
+        client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
+        worker.join(1)
+
+    def test_runtime_enforces_advertised_max_in_flight(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingEngine:
+            def process(self, audio, *_args):
+                started.set()
+                release.wait(2)
+                return audio
+
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        self.addCleanup(release.set)
+        worker = threading.Thread(
+            target=serve_client, args=(server, Runtime(BlockingEngine)), daemon=True
+        )
+        worker.start()
+        session_id = open_session(client)
+        payload = pack_audio(48000, [0.0] * 8)
+        client.sendall(pack_frame(Frame(FrameType.AUDIO_IN, payload, session_id, 1)))
+        self.assertTrue(started.wait(1))
+        client.sendall(
+            pack_frame(Frame(FrameType.AUDIO_IN, payload, session_id, 2))
+            + pack_frame(Frame(FrameType.AUDIO_IN, payload, session_id, 3))
+        )
+        skipped = recv_frame(client)
+        self.assertEqual((skipped.frame_type, skipped.sequence), (FrameType.AUDIO_SKIP, 3))
+        self.assertEqual(struct.unpack("<II", skipped.payload), (3, 1))
+        release.set()
+        self.assertEqual(recv_frame(client).sequence, 1)
+        self.assertEqual(recv_frame(client).sequence, 2)
+        client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
+        worker.join(1)
 
     def test_heartbeat_remains_responsive_during_inference(self):
         started = threading.Event()

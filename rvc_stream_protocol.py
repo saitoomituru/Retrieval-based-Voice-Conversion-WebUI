@@ -14,6 +14,12 @@ HEADER = struct.Struct("<IHHIIIIQ")
 MAX_PAYLOAD_BYTES = 1 << 20
 MAX_FRAMES = 131072
 
+# AUDIO_IN / AUDIO_OUT payload flags.  These extend the existing v1 payload;
+# peers that advertise v1 still reject unknown bits instead of guessing.
+AUDIO_FLAG_DISCONTINUOUS = 1 << 0
+AUDIO_FLAG_OFFLINE = 1 << 1
+AUDIO_FLAGS_KNOWN = AUDIO_FLAG_DISCONTINUOUS | AUDIO_FLAG_OFFLINE
+
 
 class FrameType(IntEnum):
     HELLO = 0x0001
@@ -92,6 +98,8 @@ def pack_audio(sample_rate: int, pcm, *, channels: int = 1, timestamp_ns: int = 
     values = array.array("f", pcm)
     if channels != 1:
         raise ValueError("RSVC v1 supports mono audio only")
+    if flags & ~AUDIO_FLAGS_KNOWN:
+        raise ValueError(f"unknown RSVC audio flags: {flags:#x}")
     if sys.byteorder != "little":
         values.byteswap()
     return AUDIO_HEADER.pack(sample_rate, channels, 1, len(values), timestamp_ns, flags) + values.tobytes()
@@ -103,6 +111,8 @@ def unpack_audio(payload: bytes) -> tuple[int, int, int, int, bytes]:
     sample_rate, channels, sample_format, frames, timestamp_ns, flags = AUDIO_HEADER.unpack_from(payload)
     if channels != 1 or sample_format != 1:
         raise ValueError("unsupported RSVC audio format")
+    if flags & ~AUDIO_FLAGS_KNOWN:
+        raise ValueError(f"unknown RSVC audio flags: {flags:#x}")
     pcm = payload[AUDIO_HEADER.size:]
     if len(pcm) != frames * channels * 4:
         raise ValueError("RSVC audio frame length mismatch")

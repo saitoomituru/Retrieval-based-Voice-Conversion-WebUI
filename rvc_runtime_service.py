@@ -12,11 +12,21 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from rvc_stream_protocol import HEADER, Frame, FrameType, pack_audio, pack_frame, unpack_audio, unpack_frame
+from rvc_stream_protocol import (
+    AUDIO_FLAG_OFFLINE,
+    HEADER,
+    Frame,
+    FrameType,
+    pack_audio,
+    pack_frame,
+    unpack_audio,
+    unpack_frame,
+)
 
 LOOPBACK = "127.0.0.1"
 DEFAULT_CONTROL_PORT = 17864
 DEFAULT_STREAM_PORT = 17865
+MAX_IN_FLIGHT = 2
 
 
 def _recv_exact(sock: socket.socket, size: int) -> bytes:
@@ -114,7 +124,9 @@ class RvcEngineFactory:
 def _hello_ack() -> bytes:
     name = b"RVC WebUI runtime"
     caps = json.dumps({"protocol_version": 1, "backends": ["cpu"], "sample_rates": [44100, 48000],
-                       "max_sessions": 4, "models": [{"id": "active", "name": "active"}]},
+                       "max_sessions": 4, "max_in_flight": MAX_IN_FLIGHT,
+                       "audio_flags": {"offline": AUDIO_FLAG_OFFLINE},
+                       "models": [{"id": "active", "name": "active"}]},
                       separators=(",", ":")).encode()
     payload = struct.pack("<HHIIIIIH", 1, 0, 0, 1 << 20, 131072, 1000, 4, len(name)) + name
     payload += struct.pack("<H", len(caps)) + caps
@@ -150,20 +162,25 @@ def _validate_engine_configuration(engine, sample_rate: int, block_frames: int) 
         )
 
 
-def _run_inference(engine, requests: queue.Queue, send_frame, sample_rate: int) -> None:
+def _run_inference(
+    engine, requests: queue.Queue, send_frame, sample_rate: int, slots: threading.BoundedSemaphore
+) -> None:
     while True:
         item = requests.get()
         if item is None:
             return
         frame, frames, timestamp_ns, flags, pcm = item
-        values = struct.unpack("<" + "f" * frames, pcm)
-        output = engine.process(values, 0.0, 0.0, 0.0, 0.5, -60.0, 0)
-        payload = pack_audio(sample_rate, output, timestamp_ns=timestamp_ns, flags=flags)
         try:
-            send_frame(Frame(FrameType.AUDIO_OUT, payload, frame.session_id, frame.sequence,
-                             time.monotonic_ns()))
-        except OSError:
-            return
+            values = struct.unpack("<" + "f" * frames, pcm)
+            output = engine.process(values, 0.0, 0.0, 0.0, 0.5, -60.0, 0)
+            payload = pack_audio(sample_rate, output, timestamp_ns=timestamp_ns, flags=flags)
+            try:
+                send_frame(Frame(FrameType.AUDIO_OUT, payload, frame.session_id, frame.sequence,
+                                 time.monotonic_ns()))
+            except OSError:
+                return
+        finally:
+            slots.release()
 
 
 def serve_client(sock: socket.socket, runtime: Runtime) -> None:
@@ -187,12 +204,13 @@ def serve_client(sock: socket.socket, runtime: Runtime) -> None:
             sock.sendall(packed)
 
     accepted = struct.pack("<IIIHHIIII", request_id, session_id, sample_rate, channels, 1, block_frames,
-                           crossfade, extra, block_frames * 2) + struct.pack("<II", 2, 3)
+                           crossfade, extra, block_frames * 2) + struct.pack("<II", MAX_IN_FLIGHT, 3)
     send_frame(Frame(FrameType.SESSION_ACCEPT, accepted, session_id=session_id))
-    requests = queue.Queue()
+    requests = queue.Queue(maxsize=MAX_IN_FLIGHT)
+    slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
     inference = threading.Thread(
         target=_run_inference,
-        args=(engine, requests, send_frame, sample_rate),
+        args=(engine, requests, send_frame, sample_rate, slots),
         daemon=True,
         name=f"rvc-inference-{session_id}",
     )
@@ -209,7 +227,12 @@ def serve_client(sock: socket.socket, runtime: Runtime) -> None:
                 rate, frames, timestamp_ns, flags, pcm = unpack_audio(frame.payload)
                 if rate != sample_rate or frames != block_frames:
                     raise ValueError("audio configuration mismatch")
-                requests.put((frame, frames, timestamp_ns, flags, pcm))
+                if slots.acquire(blocking=False):
+                    requests.put_nowait((frame, frames, timestamp_ns, flags, pcm))
+                else:
+                    skipped = struct.pack("<II", frame.sequence, 1)
+                    send_frame(Frame(FrameType.AUDIO_SKIP, skipped, session_id, frame.sequence,
+                                     time.monotonic_ns()))
             elif frame.frame_type is FrameType.CLOSE:
                 return
             else:

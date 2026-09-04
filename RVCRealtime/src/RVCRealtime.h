@@ -83,14 +83,6 @@ private:
   void LoadUserConfiguration();
   void SaveUserConfiguration() const;
 
-#if defined(__APPLE__)
-  // Issue #14: manual override so the REALTIME/BAKE indicator is correct even on a
-  // host that doesn't signal kAudioUnitProperty_OfflineRender. GetRenderingOffline()
-  // (auto, host-driven) is ORed with this in OnIdle(); no ProcessBlock behavior
-  // change is wired to it yet (that follows the real worker, issue #3/#6).
-  std::atomic<bool> mForceBakeMode {false};
-#endif
-
   rvc::WorkerClient mWorker;
   std::vector<float> mMonoInput;
   std::vector<float> mWetOutput;

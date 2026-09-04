@@ -350,20 +350,12 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
     graphics->AttachControl(new ITextControl(IRECT(560, 42, 750, 66), "0 ms / 0 drop",
                                               IText(12.f, IColor(255, 100, 104, 105), "Roboto-Regular", EAlign::Far)), kCtrlPerformance);
 
-    // Issue #14: REALTIME/BAKE indicator.
-    // v1 used SetLabelStr() on an IVButtonControl from OnIdle() -> froze/blanked out
-    // on a real host (experiments/20260902-1922__*.ja.md).
-    // v2 used IVButtonControl (IButtonControlBase), which is a momentary control:
-    // OnMouseDown() sets GetValue()=1, then auto-animates back to 0 -> after the
-    // first click it visually looks permanently "off" (the reported "stays gray"
-    // bug), since a momentary button never holds an on-state on its own.
-    // IVToggleControl (ISwitchControlBase) is the persistent two-state control
-    // already proven stable here as the ENGINE toggle; SetValue() below drives its
-    // on/off look directly, no auto-reset animation involved.
+    // Issue #33: host-owned render mode. This is deliberately read-only: an AU
+    // cannot turn a realtime host render into an offline render by itself.
 #if defined(__APPLE__)
-    graphics->AttachControl(new IVToggleControl(IRECT(430, 16, 555, 42),
-        [this](IControl*) { mForceBakeMode.store(!mForceBakeMode.load()); },
-        "", style, "REALTIME", "BAKE"), kCtrlRenderMode);
+    graphics->AttachControl(new IPanelControl(IRECT(430, 16, 555, 42), kPanel));
+    graphics->AttachControl(new ITextControl(IRECT(430, 16, 555, 42), "REALTIME",
+                                              IText(12.f, kMuted, "Roboto-Regular")), kCtrlRenderMode);
 #endif
 
     // Runtime and model paths. MODEL/INDEX additionally get a "\xE2\x96\xBE" scan
@@ -594,14 +586,8 @@ void RVCRealtime::OnIdle()
   if (auto* performance = GetUI()->GetControlWithTag(kCtrlPerformance))
     performance->As<ITextControl>()->SetStrFmt(80, "%.0f ms / %.0f drop", mWorker.inferMs(), mWorker.droppedBlocks());
 #if defined(__APPLE__)
-  if (auto* renderMode = GetUI()->GetControlWithTag(kCtrlRenderMode)) {
-    const bool baking = GetRenderingOffline() || mForceBakeMode.load(std::memory_order_relaxed);
-    const double targetValue = baking ? 1.0 : 0.0;
-    if (renderMode->GetValue() != targetValue) {
-      renderMode->SetValue(targetValue);
-      renderMode->SetDirty(false);
-    }
-  }
+  if (auto* renderMode = GetUI()->GetControlWithTag(kCtrlRenderMode))
+    renderMode->As<ITextControl>()->SetStr(GetRenderingOffline() ? "OFFLINE" : "REALTIME");
 #endif
 #endif
 }

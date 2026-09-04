@@ -38,9 +38,13 @@ GarageBand Human Gate合格後のforkが、RVC本体とiPlug2のupstream PRを�
 
 1. RVC `main`は開発正本であり、Sphere-DOS、fork運用AGENTS、全実験履歴、Grok設計原稿、広報画像、character固有receiptを含む。そのまま上流へ送るとreview不能で、Issue #9の受入条件にも反する。
 2. upstream用の目的branchを`origin/main`から作り、汎用source、tests、最小docsだけを抽出する必要がある。
-3. iPlug2 branchは最新2 commitへ追従し、そのtreeでRVC APP/AUを再buildする必要がある。
-4. 現forkはDarwin runtimeを既定`0.0.0.0` bindし、認証なしでBonjour広告する。研究環境の意図には合うが、局所規約の「localhost既定、LAN公開は明示」と矛盾する。upstream抽出ではloopback既定、明示opt-in時だけLAN bind/Bonjour広告にする。
-5. clean recursive checkoutからのconfigure/build/test receiptがまだない。既存build cacheだけではsubmodule再現性を証明できない。
+3. clean recursive checkoutからのconfigure/build/test receiptがまだない。既存build cacheだけではsubmodule再現性を証明できない。
+
+### 解消済み・方針訂正
+
+- iPlug2 branchは最新`upstream/master`へmergeし、forkの`824f98428`へpushした。upstream比0 behindで、実差分は引き続き`IPlugAPP_host.cpp`一ファイル。
+- Bonjour/mDNSのsegment到達性、CIDR、越境はOS、network、router、reflectorの責務とする。RVCは独自SaaS認証やsegment policyを抱えず、信頼済み制作LAN前提と非保証範囲を説明する。現行のBonjour/LAN機能をloopback限定へ後退させない。
+- clean checkoutではmodel再学習・長時間training・実モデル再生成を繰り返さない。modelなしdry-run、unit/integration test、CMake configure、APP/AU build、codesign、auvalまでを再現性対象とし、学習・実推論・聴感は既存receiptを参照する。
 
 ### non-blocking / 明記して提出可能
 
@@ -66,12 +70,11 @@ GarageBand Human Gate合格後のforkが、RVC本体とiPlug2のupstream PRを�
 
 ## 次の実行順
 
-1. iPlug2 purpose branchを最新`upstream/master`へ非破壊統合し、APP/AU buildを再検証する。
+1. iPlug2最新fork pointerでAPP/AU buildを再検証する。
 2. `origin/main`起点のRVC upstream purpose branchを別worktreeに作り、汎用差分だけを抽出する。
-3. loopback既定 / LAN明示opt-inを実装し、localhostと明示Bonjour self-routeを再検証する。
-4. clean recursive checkoutでPython tests、CMake configure、APP/AU build、codesign、auvalを再実行する。
-5. 日本語 + 繁體中文の2件のPR本文draftを、確定branch/commit/test receiptへ合わせて作る。
-6. 利用者review後にのみupstream PRを送信する。
+3. clean recursive checkoutでmodelなしdry-run、Python tests、CMake configure、APP/AU build、codesign、auvalを再実行する。
+4. 日本語 + 繁體中文の2件のPR本文draftを、確定branch/commit/test receiptへ合わせて作る。
+5. 利用者review後にのみupstream PRを送信する。
 
 ## 結果
 

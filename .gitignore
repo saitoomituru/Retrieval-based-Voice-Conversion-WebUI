@@ -20,3 +20,6 @@ assets/pymss_weights/*.pth
 
 # 学習・推論時の生成物
 logs/
+
+# agent用の一時Git worktree。成果は通常branchへ回収してから削除する。
+.worktrees/

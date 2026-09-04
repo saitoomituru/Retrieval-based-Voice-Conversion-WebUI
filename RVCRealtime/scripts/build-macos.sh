@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # macOS build for RVCRealtime. Builds the APP (standalone, human GUI
 # check) and AU (AUv2 .component) targets; VST2/VST3 stay Windows-only for this
-# fork (see CMakeLists.txt RVC_FORMATS). Windows packaging (scripts/build.ps1) is
+# implementation (see CMakeLists.txt RVC_FORMATS). Windows packaging (scripts/build.ps1) is
 # untouched by this script.
 #
 # Usage: scripts/build-macos.sh [--config Debug|Release] [--targets "t1 t2"]
@@ -30,9 +30,9 @@ if ! xcode-select -p >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -d "${IPLUG2_DIR}/.git" ]; then
+if [ ! -f "${IPLUG2_DIR}/iPlug2.cmake" ]; then
   echo "Fetching third_party/iPlug2 submodule..."
-  git -C "${ROOT}" submodule update --init third_party/iPlug2
+  git -C "${ROOT}/.." submodule update --init RVCRealtime/third_party/iPlug2
 fi
 
 if [ ! -d "${IPLUG2_DIR}/Dependencies/IGraphics/NanoVG" ]; then

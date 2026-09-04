@@ -3,6 +3,8 @@ import threading
 import unittest
 
 from rvc_runtime_gateway import RsvcGateway, RuntimeTarget
+from rvc_runtime_service import Runtime, _serve_and_close
+from rvc_runtime_supervisor import probe_rsvc_stream
 
 
 class RuntimeGatewayTest(unittest.TestCase):
@@ -47,6 +49,34 @@ class RuntimeGatewayTest(unittest.TestCase):
         self.gateway.select(replacement)
         self.assertEqual(self.gateway.snapshot()["target_identity"], "chosen")
         self.assertFalse(self.gateway.snapshot()["local"])
+
+    def test_rsvc_handshake_reaches_backend_through_gateway(self):
+        self.gateway.stop()
+        self.backend.close()
+        self.backend_thread.join(1)
+
+        self.backend = socket.create_server(("127.0.0.1", 0))
+
+        def serve_once():
+            client, _address = self.backend.accept()
+            _serve_and_close(client, Runtime())
+
+        self.backend_thread = threading.Thread(target=serve_once, daemon=True)
+        self.backend_thread.start()
+        self.gateway = RsvcGateway(
+            RuntimeTarget(
+                "local-rsvc",
+                "Local RSVC",
+                "127.0.0.1",
+                self.backend.getsockname()[1],
+                local=True,
+            ),
+            port=0,
+        )
+        self.gateway.start()
+        self.gateway.port = self.gateway._listener.getsockname()[1]
+        result = probe_rsvc_stream(port=self.gateway.port)
+        self.assertTrue(result.ready, result.detail)
 
 
 if __name__ == "__main__":

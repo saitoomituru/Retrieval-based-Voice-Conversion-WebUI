@@ -32,14 +32,17 @@ macOS / AUv2対応とWebUI所有realtime runtimeを追加する / 新增macOS、
 - clean Release build: `RVCRealtime-app` / `RVCRealtime-au`成功
 - APP / AUのad-hoc `codesign --verify --deep --strict`成功
 - clean buildのcomponentを一時installした`auval -v aufx Rvcr Rvcp`: `AU VALIDATION SUCCEEDED`
+- このforkのIntel Mac環境で2つの歌唱model（ずんだもん・デルタもん）を実際に学習し、model load、WebUI/AU変換、聴感確認まで完走
 - GarageBand実機: model切替、pitch `-12 st`、Bonjour自己route、runtime fault injection後の復旧、offline bounceを確認
 - 単trackと伴奏付きmixのoffline bounceを利用者が聴取し、変換音とdropoutなしを確認
+- 実演動画と詳しい実機記録は[fork](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI)および[YouTube Shorts](https://youtube.com/shorts/Y91K-4o8xz0)を参照
 
 範囲と制限:
 
 - Intel CPUのrealtime再生は推論deadlineを超え、dropoutが発生します。標準offline bounceは合格しています。
 - Windows実機、Apple Silicon、Logic Pro、別Mac間Bonjour、複数clientの排他制御は未確認です。利用できる実機資源がないため、このPRでは保証しません。
-- clean checkout検証ではmodelの再学習を行いません。学習・実変換の既存実機記録と、model不要の再現可能なdry-runを分離しています。
+- 学習機能は未確認ではなく、手元で2モデルが実際に完成し動作しています。ただし限られたIntel Mac計算資源で反復再学習する品質保証までは行っていません。clean checkoutでは再学習を省き、既存の学習・実変換記録とmodel不要の再現可能なdry-runを分離しています。
+- この2モデル、学習音声、indexは第三者の著作権・利用条件に関わるためPRへ含めず、再配布可能とも主張しません。動画は汎用codeの実動証拠であり、model配布物ではありません。
 - Bonjour到達範囲とnetwork分離はOS、router、VLAN、mDNS reflectorの設定へ委ねます。このlocal-production設計はSaaSのtenant分離を目的にしません。
 - iPlug2はMIDI I/OなしAPP初期化修正を含むfork revisionを参照します。この1-file修正はiPlug2へ別PRとして提出予定です。
 
@@ -65,14 +68,16 @@ macOS / AUv2対応とWebUI所有realtime runtimeを追加する / 新增macOS、
 - clean Release build：`RVCRealtime-app`與`RVCRealtime-au`成功
 - APP / AU的ad-hoc `codesign --verify --deep --strict`成功
 - 暫時安裝clean build component後執行`auval -v aufx Rvcr Rvcp`：`AU VALIDATION SUCCEEDED`
+- 已在此fork的Intel Mac環境實際訓練完成兩個歌唱模型（ずんだもん與デルタもん），並完成模型載入、WebUI/AU轉換及人工聆聽確認
 - GarageBand實機確認：模型切換、pitch `-12 st`、Bonjour自我route、runtime fault injection後復原及offline bounce
 - 使用者實際聆聽單軌與含伴奏mix的offline bounce，確認轉換有效且無dropout
+- 示範影片與詳細實機記錄請參閱[fork](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI)及[YouTube Shorts](https://youtube.com/shorts/Y91K-4o8xz0)
 
 範圍與限制：
 
 - Intel CPU即時播放會超過推論deadline並產生dropout；標準offline bounce已通過。
 - Windows實機、Apple Silicon、Logic Pro、兩台Mac間Bonjour及多client互斥尚未驗證。因缺少對應實機資源，本PR不提供這些保證。
-- clean checkout驗證不重做模型訓練；既有的訓練與實際轉換記錄，和不需模型、可重現的dry-run分開管理。
+- 訓練功能並非未驗證：本地已完成且可使用兩個模型。但受限於Intel Mac計算資源，尚未進行多次重新訓練的完整品質保證。clean checkout不重做訓練，並將既有訓練／實際轉換記錄與不需模型、可重現的dry-run分開管理。
+- 這兩個模型、訓練音訊與index涉及第三方著作權及使用條款，因此不包含於本PR，也不宣稱可以再散布。影片僅作為通用程式碼實際運作的證據，不是模型發行物。
 - Bonjour可達範圍與網路隔離交由OS、router、VLAN及mDNS reflector設定。本local-production設計不以SaaS tenant隔離為目標。
 - iPlug2目前指向含「無MIDI I/O APP初始化修正」的fork revision；此單一檔案修正預計另行向iPlug2提出PR。
-

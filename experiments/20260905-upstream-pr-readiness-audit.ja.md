@@ -20,6 +20,7 @@ GarageBand Human Gate合格後のforkが、RVC本体とiPlug2のupstream PRを�
 - upstream提出用branchは`origin/main`起点で、71 files、約5,774 insertions / 218 deletions。
 - `git diff --check origin/main...upstream/macos-au-webui-runtime` は成功。
 - tracked model、index、`.venv`、runtime log、TEMPは検出されず、`.gitignore`適用を確認した。
+- 実機で作成した2モデル、学習音声、indexは第三者の著作権・利用条件に関わるため上流branchへ含めず、再配布可能性も主張しない。forkの動画はcodeの実動証拠でありmodel配布ではない。
 - 1 MiB以上の追加物はfork広報用画像 `assets/fusamofu-img/AUv2inside.png`（2,969,293 bytes）のみ。
 - 実験票にはlocal absolute pathが含まれるが、汎用source内に新規の開発者固有pathは検出されなかった。上流既存の`infer/rmvpe.py`にはWindows開発path例が残るが今回差分ではない。
 - push済みbranchのclean recursive cloneで全Python回帰43件、macOS APP/AU Release build、codesign、auvalが合格した。
@@ -47,7 +48,7 @@ GarageBand Human Gate合格後のforkが、RVC本体とiPlug2のupstream PRを�
 
 - iPlug2 branchは最新`upstream/master`へmergeし、forkの`cbeba6cff704bdedba74166af6f6ea979bada5df`へpushした。実差分は引き続き`IPlugAPP_host.cpp`一ファイル。
 - Bonjour/mDNSのsegment到達性、CIDR、越境はOS、network、router、reflectorの責務とする。RVCは独自SaaS認証やsegment policyを抱えず、信頼済み制作LAN前提と非保証範囲を説明する。現行のBonjour/LAN機能をloopback限定へ後退させない。
-- clean checkoutではmodel再学習・長時間training・実モデル再生成を繰り返さない。modelなしdry-run、unit/integration test、CMake configure、APP/AU build、codesign、auvalまでを再現性対象とし、学習・実推論・聴感は既存receiptを参照する。
+- 学習機能は未確認ではない。Intel Mac実機でずんだもん・デルタもんの2モデルを完成させ、model load、WebUI/AU実変換、聴感まで確認している。計算資源が限られるため、clean checkoutごとの再学習や反復trainingによる品質保証は行わない。modelなしdry-run、unit/integration test、CMake configure、APP/AU build、codesign、auvalを再現性対象とし、学習・実推論・聴感は既存receiptとforkの実演動画を参照する。
 
 ### non-blocking / 明記して提出可能
 

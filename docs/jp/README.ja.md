@@ -1,3 +1,32 @@
+> [!IMPORTANT]
+> **このforkは、Windows中心だったRVC realtime系をIntel Macの学習・推論からmacOS Audio Unitまで登攀させた実験実装です。**
+>
+> GarageBand標準offline Bounceで、実モデルによる単独vocalとオケ付きmixの変換を完走しました。AU内へPython/PyTorchを抱えず、WebUIがruntimeと死活管理を所有し、AUは薄いaudio headとして接続します。
+
+# Intel Mac / GarageBand / Audio Unit統合
+
+![GarageBandでRVCRealtime AUを標準offline Bounce中](../../assets/fusamofu-img/AUv2inside.png)
+
+**従来のWindows用WebUI・VST画面を表示しただけの移植ではありません。** Intel Mac上のCPU前処理、F0/特徴抽出、学習、実モデル推論、AUv2、RSVC stream、WebUI所有runner、offline render、異常終了Recoveryを一つの実動経路へ統合しました。画像はmockではなく、GarageBandが実モデルを使ったオケ付きmixを実際にバウンスしている最中のhost画面です。
+
+実機で確認した到達点:
+
+- Intel Mac / Python 3.12でCPU学習と実モデル推論
+- macOS AUv2のRelease build、codesign、`auval`
+- GarageBandへのAU挿入、単トラックSolo Bounce、オケ付きMix Bounce
+- host標準offline通知下で約1183 msの推論を待ち、`0 drop`で完走
+- **live-host fault-injection test**: 操作中hostのruntimeだけを3回連続`SIGKILL`し、GarageBandを落とさず3/3でrunner再生成、AU自動再接続、推論復帰
+
+現在のIntel CPUではrealtime 130 ms blockに約1.18秒の推論を要するため、リアルタイム再生は未合格です。offline Bounceは人間の聴感で単独vocal・オケ付きmixとも合格しました。Bonjour/LANは単一Macでの自己広告・自己発見・選択を本forkの受入点とし、別Mac間およびWindows回帰は検証資源を募集しています。
+
+- [開発ロードマップ Issue #1](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/1)
+- [GarageBand offline Bounceの実験票](../../experiments/20260904-1015__garageband-offline-bounce-in-progress.ja.md)
+- [live-host fault-injection testの実験票](../../experiments/20260904-1055__garageband-runtime-sigkill-recovery.ja.md)
+
+---
+
+以下は上流RVC WebUIの日本語READMEです。
+
 <div align="center">
 
 <h1>Retrieval-based-Voice-Conversion-WebUI</h1>

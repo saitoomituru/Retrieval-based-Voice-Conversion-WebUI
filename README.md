@@ -9,6 +9,8 @@
 
 ![GarageBandでRVCRealtime AUを標準offline Bounce中](assets/fusamofu-img/AUv2inside.png)
 
+**Windows用WebUIとVSTのスクリーンショットだけだったRVCを、Intel Mac上での学習・推論からGarageBand AUv2、実モデル変換、標準offline Bounce、runtime障害復旧まで貫通させた実機記録です。** 画像はUI mockではなく、オケ付きmixをGarageBandが実際にバウンスしている最中のhost画面です。
+
 上流のWindows VST実装を単に起動しただけではありません。このforkでは、CPU学習・推論、共有RVC engine、Audio Unit、stream protocol、WebUI所有runner、異常終了Recoveryまでを一つの経路として実装しました。
 
 ## 到達点

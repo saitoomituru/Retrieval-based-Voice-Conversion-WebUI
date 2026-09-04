@@ -1,10 +1,16 @@
 import socket
 import struct
+import json
+import sys
+import tempfile
 import threading
 import time
+import types
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from rvc_runtime_service import Runtime, recv_frame, serve_client
+from rvc_runtime_service import RvcEngineFactory, Runtime, recv_frame, serve_client
 from rvc_stream_protocol import (
     AUDIO_FLAG_DISCONTINUOUS,
     AUDIO_FLAG_OFFLINE,
@@ -37,6 +43,46 @@ def open_session(client: socket.socket, *, block_frames: int = 8, model_id: str 
 
 
 class RuntimeServiceTest(unittest.TestCase):
+    def test_engine_factory_resolves_web_default_and_au_override_by_opaque_id(self):
+        built = []
+
+        class FakeEngine:
+            def __init__(self, config):
+                self.config = config
+                built.append(config)
+
+            def prewarm(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as temporary:
+            config_path = Path(temporary) / "engine.json"
+            config_path.write_text(
+                json.dumps({
+                    "rvc_root": "/rvc",
+                    "model_path": "/models/a.pth",
+                    "index_path": "",
+                    "default_model_id": "rvc-a",
+                    "models": [
+                        {"id": "rvc-a", "name": "a.pth", "model_path": "/models/a.pth", "index_path": ""},
+                        {"id": "rvc-b", "name": "b.pth", "model_path": "/models/b.pth", "index_path": "/indices/b.index"},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            factory = RvcEngineFactory(str(config_path))
+            advertised = factory.models()
+            self.assertEqual([model["id"] for model in advertised], ["active", "rvc-a", "rvc-b"])
+            self.assertNotIn("model_path", advertised[1])
+            with self.assertRaisesRegex(ValueError, "unknown runtime model id"):
+                factory.create_for_session(48000, 8, 0, 0, model_id="/models/b.pth")
+            fake_module = types.SimpleNamespace(RVCStreamEngine=FakeEngine)
+            with mock.patch.dict(sys.modules, {"RVCRealtime.worker.rvc_worker": fake_module}):
+                factory.create_for_session(48000, 8, 0, 0, model_id="active")
+                factory.create_for_session(48000, 8, 0, 0, model_id="rvc-b")
+        self.assertEqual(built[0]["model_path"], "/models/a.pth")
+        self.assertEqual(built[1]["model_path"], "/models/b.pth")
+        self.assertEqual(built[1]["index_path"], "/indices/b.index")
+
     def test_session_audio_shape_is_passed_to_engine_factory(self):
         calls = []
 

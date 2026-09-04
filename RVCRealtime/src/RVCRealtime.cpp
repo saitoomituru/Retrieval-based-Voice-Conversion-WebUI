@@ -291,10 +291,13 @@ class RVCRuntimeMenuControl final : public IControl
 {
 public:
   using SelectionFunc = std::function<void(const char*)>;
+  using CurrentModelFunc = std::function<std::string()>;
 
-  explicit RVCRuntimeMenuControl(const IRECT& bounds, SelectionFunc onRuntimeChanged)
+  explicit RVCRuntimeMenuControl(const IRECT& bounds, SelectionFunc onRuntimeChanged,
+                                 CurrentModelFunc currentModel)
   : IControl(bounds)
   , mOnRuntimeChanged(std::move(onRuntimeChanged))
+  , mCurrentModel(std::move(currentModel))
   {
   }
 
@@ -320,10 +323,18 @@ public:
       return;
     }
     mChoices = result.choices;
+    const std::string currentId = mCurrentModel ? mCurrentModel() : "active";
+    auto current = std::find_if(result.models.begin(), result.models.end(),
+      [&currentId](const rvc::RuntimeModel& model) { return model.id == currentId; });
+    if (current == result.models.end())
+      current = std::find_if(result.models.begin(), result.models.end(),
+        [](const rvc::RuntimeModel& model) { return model.id == "active"; });
     if (auto* model = GetUI()->GetControlWithTag(kCtrlModelName))
-      model->As<ITextControl>()->SetStr(result.model.empty() ? "NOT CONFIGURED" : result.model.c_str());
+      model->As<ITextControl>()->SetStr(
+        current == result.models.end() ? "NOT CONFIGURED" : current->name.c_str());
     if (auto* index = GetUI()->GetControlWithTag(kCtrlIndexName))
-      index->As<ITextControl>()->SetStr(result.index.empty() ? "NONE" : result.index.c_str());
+      index->As<ITextControl>()->SetStr(
+        current == result.models.end() || current->index.empty() ? "NONE" : current->index.c_str());
     mMenu.Clear();
     for (size_t index = 0; index < mChoices.size(); ++index) {
       const bool selected = mChoices[index] == result.selected;
@@ -367,6 +378,7 @@ private:
   std::string mDisplay {"CLICK SCAN / SELECT"};
   std::string mDetail {"WebUI owns Bonjour discovery; AU requests the shared list"};
   SelectionFunc mOnRuntimeChanged;
+  CurrentModelFunc mCurrentModel;
 };
 
 class RVCModelMenuControl final : public IControl
@@ -563,7 +575,12 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
     graphics->AttachControl(new ITextControl(IRECT(30, 100, 92, 178), "RUNTIME",
                                               IText(13.f, kMuted, "Roboto-Regular", EAlign::Near)));
     graphics->AttachControl(new RVCRuntimeMenuControl(
-      IRECT(96, 100, 750, 178), [this](const char* modelId) { SetModelPath(modelId); }),
+      IRECT(96, 100, 750, 178),
+      [this](const char* modelId) { SetModelPath(modelId); },
+      [this]() {
+        std::lock_guard<std::mutex> lock(mStateMutex);
+        return std::string(mModelPath.Get());
+      }),
       kCtrlRuntimeMenu);
     auto attachRuntimeOwnedRow = [&](const float y, const char* label, const int textTag,
                                      const char* initial) {

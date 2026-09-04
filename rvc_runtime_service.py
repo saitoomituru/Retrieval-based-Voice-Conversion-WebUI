@@ -220,12 +220,12 @@ class RvcEngineFactory:
         *,
         model_id: str = "active",
     ):
-        from RVCRealtime.worker.rvc_worker import RVCStreamEngine
-
         resolved_model_id = self._default_model_id if model_id == "active" else model_id
         if resolved_model_id not in self._models:
             raise ValueError(f"unknown runtime model id: {model_id}")
         model = self._models[resolved_model_id]
+        from RVCRealtime.worker.rvc_worker import RVCStreamEngine
+
         config = copy.deepcopy(self._base_config)
         config.pop("models", None)
         config.pop("default_model_id", None)

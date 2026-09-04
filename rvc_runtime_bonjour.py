@@ -226,4 +226,3 @@ class BonjourRuntimeDirectory:
         self._advertiser = None
         self._browser_thread = None
         self._detail = "Bonjour停止"
-

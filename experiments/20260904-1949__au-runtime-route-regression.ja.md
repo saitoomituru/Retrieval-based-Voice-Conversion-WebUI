@@ -104,4 +104,3 @@ GarageBandでの変換音再生とoffline bounceは、修正版プロセスに�
 - #36のSIGTERM orphan回収は未解決。
 - Human Gate: GarageBandでENGINE ON、Localhost選択後の変換音、Bonjour self再選択後の
   session復帰、offline bounceを聴感確認する。
-

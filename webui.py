@@ -93,6 +93,8 @@ import socket
 import subprocess
 import time
 
+from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
+from rvc_runtime_gateway import DEFAULT_BACKEND_PORT, RsvcGateway
 from rvc_runtime_supervisor import RvcRuntimeSupervisor
 
 
@@ -100,9 +102,17 @@ logging.getLogger("numba").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+_runtime_bind_host = "0.0.0.0" if platform.system() == "Darwin" else "127.0.0.1"
 rvc_runtime_supervisor = RvcRuntimeSupervisor(
-    Path(now_dir), python_executable=sys.executable
+    Path(now_dir),
+    python_executable=sys.executable,
+    stream_port=DEFAULT_BACKEND_PORT,
+    stream_bind_host=_runtime_bind_host,
 )
+rvc_runtime_bonjour = BonjourRuntimeDirectory(Path(now_dir), DEFAULT_BACKEND_PORT)
+rvc_runtime_gateway = RsvcGateway(rvc_runtime_bonjour.local_target())
+_selected_runtime_choice = LOCAL_CHOICE
+_runtime_choice_lock = threading.Lock()
 
 
 def find_available_port(start_port, host="0.0.0.0"):
@@ -265,7 +275,38 @@ def normalize_index_path(file_index):
 
 
 def rvc_runtime_status():
-    return rvc_runtime_supervisor.status_text()
+    target = rvc_runtime_gateway.target()
+    selection = target.label
+    available = target.local or any(
+        service.identity == target.identity for service in rvc_runtime_bonjour.services()
+    )
+    route_state = "選択中" if available else "消失・自動failoverなし"
+    return (
+        f"{rvc_runtime_supervisor.status_text()} | "
+        f"gateway=127.0.0.1:17865→{target.host}:{target.port} "
+        f"({selection}, {route_state}) | {rvc_runtime_bonjour.status_text()}"
+    )
+
+
+def refresh_rvc_runtime_choices():
+    with _runtime_choice_lock:
+        selected = _selected_runtime_choice
+    choices = rvc_runtime_bonjour.choices()
+    value = selected if selected in choices else LOCAL_CHOICE
+    return {"choices": choices, "value": value, "__type__": "update"}, rvc_runtime_status()
+
+
+def select_rvc_runtime(choice):
+    global _selected_runtime_choice
+    choice = str(choice or LOCAL_CHOICE)
+    try:
+        target = rvc_runtime_bonjour.resolve(choice)
+    except (OSError, RuntimeError, ValueError) as error:
+        return f"ERROR | runtime選択失敗: {error} | {rvc_runtime_status()}"
+    rvc_runtime_gateway.select(target)
+    with _runtime_choice_lock:
+        _selected_runtime_choice = choice
+    return rvc_runtime_status()
 
 
 def configure_rvc_runtime(model_name, file_index):
@@ -297,7 +338,7 @@ def configure_rvc_runtime(model_name, file_index):
     )
     pending_path.replace(config_path)
     rvc_runtime_supervisor.configure_engine(config_path)
-    return rvc_runtime_supervisor.status_text()
+    return rvc_runtime_status()
 
 
 def report_missing_index(file_index):
@@ -1931,6 +1972,30 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                     queue=False,
                     api_name="rvc_runtime_health",
                 )
+            with gr.Row():
+                runtime_choice = gr.Dropdown(
+                    label="AU接続先runtime（Bonjourは明示選択）",
+                    choices=[LOCAL_CHOICE],
+                    value=LOCAL_CHOICE,
+                    interactive=True,
+                    scale=4,
+                )
+                runtime_discovery_refresh = gr.Button("Bonjour一覧を更新", scale=1)
+                runtime_select = gr.Button("このruntimeを選択", variant="primary", scale=1)
+                runtime_discovery_refresh.click(
+                    fn=refresh_rvc_runtime_choices,
+                    inputs=[],
+                    outputs=[runtime_choice, runtime_status],
+                    queue=False,
+                    api_name="rvc_runtime_discovery",
+                )
+                runtime_select.click(
+                    fn=select_rvc_runtime,
+                    inputs=[runtime_choice],
+                    outputs=[runtime_status],
+                    queue=False,
+                    api_name="rvc_runtime_select",
+                )
             with gr.TabItem(i18n("单次推理")):
                 with gr.Group():
                     with gr.Row():
@@ -2919,8 +2984,14 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
     if config.iscolab:
         app.queue(concurrency_count=511, max_size=1022).launch(share=True)
     else:
-        rvc_runtime_supervisor.start()
+        runtime_ready = rvc_runtime_supervisor.start()
         try:
+            if runtime_ready:
+                rvc_runtime_gateway.start()
+                if platform.system() == "Darwin":
+                    rvc_runtime_bonjour.start()
             launch_webui_with_port_fallback(app, config)
         finally:
+            rvc_runtime_bonjour.stop()
+            rvc_runtime_gateway.stop()
             rvc_runtime_supervisor.stop()

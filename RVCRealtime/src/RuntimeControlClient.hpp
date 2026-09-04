@@ -8,6 +8,8 @@ namespace rvc {
 struct RuntimeChoices {
   std::vector<std::string> choices;
   std::string selected;
+  std::string model;
+  std::string index;
   std::string error;
 };
 

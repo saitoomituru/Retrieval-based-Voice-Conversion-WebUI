@@ -2,6 +2,7 @@ import json
 import urllib.request
 from urllib.parse import quote
 import unittest
+import tempfile
 from pathlib import Path
 
 from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
@@ -58,6 +59,28 @@ class RuntimeRouterControlTest(unittest.TestCase):
         )
         with urllib.request.urlopen(request, timeout=1) as response:
             self.assertEqual(response.read(), b"OK\n")
+
+    def test_plain_text_reports_webui_owned_engine_names(self):
+        self.control.stop()
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "engine.json"
+            config.write_text(
+                json.dumps({
+                    "model_path": "/models/singer.pth",
+                    "index_path": "/indices/singer.index",
+                }),
+                encoding="utf-8",
+            )
+            self.control = RuntimeRouterControl(
+                self.directory, self.gateway, port=0, engine_config_path=config
+            )
+            self.control.start()
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.control.port}/v1/runtimes.txt", timeout=1
+            ) as response:
+                body = response.read().decode("ascii")
+            self.assertIn("model\tsinger.pth", body)
+            self.assertIn("index\tsinger.index", body)
 
 
 if __name__ == "__main__":

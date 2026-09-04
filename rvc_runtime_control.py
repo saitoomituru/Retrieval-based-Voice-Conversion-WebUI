@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, unquote
@@ -24,11 +25,13 @@ class RuntimeRouterControl:
         *,
         host: str = DEFAULT_CONTROL_HOST,
         port: int = DEFAULT_CONTROL_PORT,
+        engine_config_path=None,
     ) -> None:
         self.directory = directory
         self.gateway = gateway
         self.host = host
         self.port = port
+        self.engine_config_path = engine_config_path
         self._selected_choice = LOCAL_CHOICE
         self._lock = threading.Lock()
         self._server = None
@@ -55,6 +58,17 @@ class RuntimeRouterControl:
         available = target.local or any(
             service.identity == target.identity for service in self.directory.services()
         )
+        engine = {"model": "", "index": ""}
+        if self.engine_config_path is not None:
+            try:
+                with open(self.engine_config_path, encoding="utf-8") as handle:
+                    config = json.load(handle)
+                engine = {
+                    "model": os.path.basename(str(config.get("model_path", ""))),
+                    "index": os.path.basename(str(config.get("index_path", ""))),
+                }
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                pass
         return {
             "protocol": 1,
             "selected": selected,
@@ -62,6 +76,7 @@ class RuntimeRouterControl:
             "choices": choices,
             "gateway": self.gateway.snapshot(),
             "bonjour": self.directory.status_text(),
+            "engine": engine,
         }
 
     def start(self) -> None:
@@ -84,6 +99,8 @@ class RuntimeRouterControl:
                     lines = [
                         "RSVC-CONTROL/1",
                         "selected\t" + quote(str(snapshot["selected"]), safe=""),
+                        "model\t" + quote(str(snapshot["engine"]["model"]), safe=""),
+                        "index\t" + quote(str(snapshot["engine"]["index"]), safe=""),
                     ]
                     lines.extend("choice\t" + quote(choice, safe="") for choice in snapshot["choices"])
                     body = ("\n".join(lines) + "\n").encode("ascii")

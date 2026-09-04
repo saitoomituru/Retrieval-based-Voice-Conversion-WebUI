@@ -317,6 +317,10 @@ public:
       return;
     }
     mChoices = result.choices;
+    if (auto* model = GetUI()->GetControlWithTag(kCtrlModelName))
+      model->As<ITextControl>()->SetStr(result.model.empty() ? "NOT CONFIGURED" : result.model.c_str());
+    if (auto* index = GetUI()->GetControlWithTag(kCtrlIndexName))
+      index->As<ITextControl>()->SetStr(result.index.empty() ? "NONE" : result.index.c_str());
     mMenu.Clear();
     for (size_t index = 0; index < mChoices.size(); ++index) {
       const bool selected = mChoices[index] == result.selected;
@@ -483,13 +487,29 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
     graphics->AttachControl(new ITextControl(IRECT(30, 100, 92, 178), "RUNTIME",
                                               IText(13.f, kMuted, "Roboto-Regular", EAlign::Near)));
     graphics->AttachControl(new RVCRuntimeMenuControl(IRECT(96, 100, 750, 178)), kCtrlRuntimeMenu);
+    auto attachRuntimeOwnedRow = [&](const float y, const char* label, const int textTag,
+                                     const char* initial) {
+      const float rowHeight = 36.f;
+      graphics->AttachControl(new ITextControl(IRECT(30, y, 140, y + rowHeight), label,
+                                                IText(12.f, kMuted, "Roboto-Regular", EAlign::Near)));
+      graphics->AttachControl(new IPanelControl(IRECT(144, y, 750, y + rowHeight), kPanel));
+      graphics->AttachControl(new ITextControl(IRECT(158, y, 738, y + rowHeight), initial,
+                                                IText(12.f, kText, "Roboto-Regular", EAlign::Near)), textTag);
+    };
+    attachRuntimeOwnedRow(184.f, "MODEL (WEBUI)", kCtrlModelName, "SCAN RUNTIME TO REFRESH");
+    attachRuntimeOwnedRow(226.f, "INDEX (WEBUI)", kCtrlIndexName, "SCAN RUNTIME TO REFRESH");
 #else
     attachFileRow(100.f, "RVC ROOT", kCtrlRvcRoot, PathRow::RvcRoot);
     attachFileRow(142.f, "PYTHON", kCtrlPythonPath, PathRow::Python);
-#endif
     attachFileRow(184.f, "MODEL", kCtrlModelName, PathRow::Model);
     attachFileRow(226.f, "INDEX", kCtrlIndexName, PathRow::Index);
-    graphics->AttachControl(new ITextControl(IRECT(96, 266, 750, 290), "Select RVC root and Python runtime",
+#endif
+    graphics->AttachControl(new ITextControl(IRECT(96, 266, 750, 290),
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+                                              "Model and index are owned by the WebUI runtime",
+#else
+                                              "Select RVC root and Python runtime",
+#endif
                                               IText(12.f, kAmber, "Roboto-Regular", EAlign::Near)), kCtrlStatusDetail);
 
     // 3x3 slider grid

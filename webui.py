@@ -120,7 +120,11 @@ rvc_runtime_supervisor = RvcRuntimeSupervisor(
 )
 rvc_runtime_bonjour = BonjourRuntimeDirectory(Path(now_dir), DEFAULT_BACKEND_PORT)
 rvc_runtime_gateway = RsvcGateway(rvc_runtime_bonjour.local_target())
-rvc_runtime_control = RuntimeRouterControl(rvc_runtime_bonjour, rvc_runtime_gateway)
+rvc_runtime_control = RuntimeRouterControl(
+    rvc_runtime_bonjour,
+    rvc_runtime_gateway,
+    engine_config_path=_runtime_engine_config,
+)
 
 
 def find_available_port(start_port, host="0.0.0.0"):

@@ -161,6 +161,10 @@ RuntimeChoices RuntimeControlClient::list() const
         }
         if (line.compare(0, tab, "selected") == 0)
           result.selected = decoded;
+        else if (line.compare(0, tab, "model") == 0)
+          result.model = decoded;
+        else if (line.compare(0, tab, "index") == 0)
+          result.index = decoded;
         else if (line.compare(0, tab, "choice") == 0)
           result.choices.push_back(decoded);
       }

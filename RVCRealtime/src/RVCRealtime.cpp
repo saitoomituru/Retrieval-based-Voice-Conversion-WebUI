@@ -524,7 +524,13 @@ void RVCRealtime::ProcessBlock(sample** inputs, sample** outputs, const int nFra
   }
 
   const bool requested = GetParam(kEngine)->Bool();
-  if (!requested || !mWorker.isReady()) {
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  const bool renderingOffline = GetRenderingOffline();
+  mWorker.setRenderingOffline(renderingOffline);
+#else
+  const bool renderingOffline = false;
+#endif
+  if (!requested || (!renderingOffline && !mWorker.isReady())) {
     mActiveBlend = std::max(0.0f, mActiveBlend - static_cast<float>(nFrames) / 1024.0f);
     passthrough();
     return;
@@ -537,8 +543,18 @@ void RVCRealtime::ProcessBlock(sample** inputs, sample** outputs, const int nFra
 
   for (int frame = 0; frame < nFrames; ++frame)
     mMonoInput[static_cast<size_t>(frame)] = static_cast<float>(0.5 * (inL[frame] + inR[frame]));
-  mWorker.pushInput(mMonoInput.data(), static_cast<size_t>(nFrames));
-  const size_t wetRead = mWorker.popOutput(mWetOutput.data(), static_cast<size_t>(nFrames));
+  size_t wetRead = 0;
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+  if (renderingOffline) {
+    if (mWorker.processOffline(mMonoInput.data(), static_cast<size_t>(nFrames),
+                               mWetOutput.data(), static_cast<size_t>(nFrames)))
+      wetRead = static_cast<size_t>(nFrames);
+  } else
+#endif
+  {
+    mWorker.pushInput(mMonoInput.data(), static_cast<size_t>(nFrames));
+    wetRead = mWorker.popOutput(mWetOutput.data(), static_cast<size_t>(nFrames));
+  }
   std::fill(mWetOutput.begin() + static_cast<ptrdiff_t>(wetRead),
             mWetOutput.begin() + nFrames, 0.0f);
 

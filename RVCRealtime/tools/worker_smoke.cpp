@@ -34,7 +34,7 @@ int main(const int argc, char** argv)
 
   rvc::WorkerClient worker;
   if (argc < 4) {
-      std::cerr << "Usage: rvc-worker-smoke RVC_ROOT PYTHON_EXE MODEL_PTH [INDEX] [BLOCK_MS] [CROSSFADE_MS] [BLOCK_COUNT] [offline]\n";
+      std::cerr << "Usage: rvc-worker-smoke RVC_ROOT PYTHON_EXE MODEL_PTH [INDEX] [BLOCK_MS] [CROSSFADE_MS] [BLOCK_COUNT] [offline] [CALLBACK_FRAMES]\n";
       return EXIT_FAILURE;
   }
   worker.setPath(rvc::kStateRvcRoot, argv[1]);
@@ -52,6 +52,7 @@ int main(const int argc, char** argv)
 #else
   const bool offline = false;
 #endif
+  const std::size_t callbackFrames = argc > 9 ? std::max<std::size_t>(1, std::stoul(argv[9])) : 0;
   worker.setSampleRate(sampleRate);
     worker.setEnabled(true);
 
@@ -70,13 +71,15 @@ int main(const int argc, char** argv)
   std::size_t received = 0;
   if (offline) {
 #if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
-      std::vector<float> silence(frames, 0.0f);
-      const std::size_t calls = expected / frames;
-      for (std::size_t block = 0; block < calls; ++block) {
-          const float* source = block < blockCount ? input.data() + block * frames : silence.data();
-          if (!worker.processOffline(source, frames, output.data() + received, frames, 30000))
+      std::vector<float> offlineInput(expected, 0.0f);
+      std::copy(input.begin(), input.end(), offlineInput.begin());
+      const std::size_t callback = callbackFrames == 0 ? frames : callbackFrames;
+      while (received < expected) {
+          const std::size_t count = std::min(callback, expected - received);
+          if (!worker.processOffline(offlineInput.data() + received, count,
+                                     output.data() + received, count, 30000))
               break;
-          received += frames;
+          received += count;
       }
 #endif
   } else {

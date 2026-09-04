@@ -55,7 +55,7 @@ WebUIの `rvc_runtime_configure` APIを既存deltamon選択のまま一度実行
 
 ## 結果
 
-`not-tested`。機械検証と配備は成功したが、GarageBand上でdeltamon defaultとzundamon AU overrideを聴き分けるHuman Gateは未実行。
+`success`。GarageBand上でWebUI既定とAU明示モデルを切り替え、モデル選択、設定スロット保存・復元、表示名再解決をHuman Gateで確認した。ずんだもん設定は変換音と表示名の双方で復元した。
 
 ## Human Gate
 
@@ -68,7 +68,7 @@ WebUIの `rvc_runtime_configure` APIを既存deltamon選択のまま一度実行
 
 ## unknown / 非保証
 
-- GarageBandで新MODEL menuが表示・操作できるかはHuman Gate待ち。
+- GarageBandで新MODEL menuの表示・操作、設定スロット復元はHuman Gate合格。
 - 1 runtimeへ複数clientが接続した場合の排他、公平性、資源予約は保証外。
 - 別Mac間BonjourとWindows互換は実機資源待ち。
 
@@ -82,4 +82,4 @@ Human Gate開始時、AUでずんだもんを選んでGarageBandの設定スロ�
 
 原因は、presetへ保存すべきstable opaque IDと、人間へ見せるruntime由来の表示名を同じUI fieldで扱い、state復元後のID→表示名解決を行っていなかったことである。保存形式を表示名へ戻すとrenameやremote runtimeで壊れるため、opaque IDの保存は維持した。
 
-修正では、`UnserializeState`と`OnUIOpen`がatomicな更新要求だけを立て、UI idle threadがlocalhost controllerのmodel catalogから表示名とindex名を再解決する。state復元処理とaudio callbackにはnetwork I/Oを置かない。AU Release build、全Python回帰43件は再度成功した。GarageBandでのスロット保存→復元表示は再Human Gate待ち。
+修正では、`UnserializeState`と`OnUIOpen`がatomicな更新要求だけを立て、UI idle threadがlocalhost controllerのmodel catalogから表示名とindex名を再解決する。state復元処理とaudio callbackにはnetwork I/Oを置かない。AU Release build、全Python回帰43件は再度成功した。GarageBandでのスロット保存→復元表示も再Human Gateに合格した。

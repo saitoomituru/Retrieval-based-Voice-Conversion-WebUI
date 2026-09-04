@@ -2,6 +2,8 @@
 
 状態: `FREEZE / 情報子工学ペイン`
 
+追跡先: https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/39
+
 担当: 齋藤みつる / Codex
 
 開発支援としてGrok / Geminiが参加した実装の来歴も、fork側で保持する。

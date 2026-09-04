@@ -1,6 +1,8 @@
 # RVC上流PR草案（日本語・繁體中文）
 
-状態: `DRAFT`（未送信）
+状態: `PR-BLOCKED / ISSUE-SUBMITTED`（上流でPull Request無効、Issue #2854として提出）
+
+提出先: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI/issues/2854
 対象分岐: `saitoomituru:upstream/macos-au-webui-runtime`
 
 ## 題名

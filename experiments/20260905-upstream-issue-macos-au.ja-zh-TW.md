@@ -1,5 +1,7 @@
 # Intel macOSで学習からGarageBand AUv2まで登攀 / 在Intel macOS從訓練一路登上GarageBand AUv2
 
+提出先: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI/issues/2854
+
 ## 作者旗 / 作者標記
 
 - 実装・実機検証 / 實作與實機驗證: [齋藤みつる / saitoomituru](https://github.com/saitoomituru)

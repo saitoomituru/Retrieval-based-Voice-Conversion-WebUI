@@ -96,6 +96,7 @@ import time
 from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
 from rvc_runtime_control import RuntimeRouterControl
 from rvc_runtime_gateway import DEFAULT_BACKEND_PORT, RsvcGateway
+from rvc_runtime_lifecycle import sigterm_as_keyboard_interrupt
 from rvc_runtime_supervisor import RvcRuntimeSupervisor
 
 
@@ -2992,16 +2993,17 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
     if config.iscolab:
         app.queue(concurrency_count=511, max_size=1022).launch(share=True)
     else:
-        runtime_ready = rvc_runtime_supervisor.start()
-        try:
-            if runtime_ready:
-                rvc_runtime_gateway.start()
-                if platform.system() == "Darwin":
-                    rvc_runtime_bonjour.start()
-                rvc_runtime_control.start()
-            launch_webui_with_port_fallback(app, config)
-        finally:
-            rvc_runtime_control.stop()
-            rvc_runtime_bonjour.stop()
-            rvc_runtime_gateway.stop()
-            rvc_runtime_supervisor.stop()
+        with sigterm_as_keyboard_interrupt():
+            runtime_ready = rvc_runtime_supervisor.start()
+            try:
+                if runtime_ready:
+                    rvc_runtime_gateway.start()
+                    if platform.system() == "Darwin":
+                        rvc_runtime_bonjour.start()
+                    rvc_runtime_control.start()
+                launch_webui_with_port_fallback(app, config)
+            finally:
+                rvc_runtime_control.stop()
+                rvc_runtime_bonjour.stop()
+                rvc_runtime_gateway.stop()
+                rvc_runtime_supervisor.stop()

@@ -93,3 +93,35 @@ GarageBand processからWebUI所有runtimeへ、loopback RSVC sessionが実際�
 - logのstdout buffering量と未flush行
 - RMVPE再読込が今回session内で発生したか
 - 生成音声の品質、drop、timeline alignment
+
+## 追記: 単トラックSolo Bounce完了
+
+観測時刻: 2026-09-04 10:19 JST
+
+### 人間による報告
+
+- GarageBand標準Bounceを単トラックSolo modeで完走した。
+- 生成音声の視聴テストは合格した。
+- 次は設定を初期化し、オケを含むBounceを試験する。
+
+これは利用者によるHuman Reviewであり、agentによる聴感判定ではない。
+
+### 終了後の機械観測
+
+- runtime PID 69192は生存し、CPU 0.0%、state Sへ戻った。
+- WebUI PID 68905とGarageBand PID 93090も生存していた。
+- 17865はruntimeのLISTENだけが残り、GarageBandとのESTABLISHED sessionは正常に消えた。
+- runtime logは68行/4476 bytesから70行/4603 bytesへ増え、最終更新は10:16:29 JSTだった。
+- 追加された末尾blockは`features=0.552s, index=0.000s, pitch=0.116s, model=0.467s`を記録した。
+- process crash、接続残留、runtime再起動は観測されなかった。
+
+### 更新判定
+
+`solo-bounce-human-pass / session-cleanly-closed / full-mix-not-tested`
+
+- 単トラックSolo Bounce聴感: human-pass
+- Bounce完走後のruntime生存: observed
+- RSVC session終了: observed
+- オケ付きBounce: not-tested
+- offline通知回数、drop表示: not-reported
+- timeline alignment、末尾欠損: not-reported

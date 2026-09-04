@@ -1,13 +1,78 @@
 > [!IMPORTANT]
-> **Fork development focus: macOS + Audio Unit support for `RVCRealtime`.**
+> **このforkは、Windows専用だったRVC realtime系をIntel Macの学習・推論からmacOS Audio Unitまで登攀させた実験実装です。**
 >
-> This fork is being used to port the upstream Windows VST implementation to macOS and expose it as an Audio Unit for Logic Pro / GarageBand. The goal is to keep the work generic and upstreamable rather than turn this fork into a separate all-purpose RVC distribution.
+> GarageBand標準offline Bounceで、実モデルによる単独vocalとオケ付きmixの変換を完走しました。AU内へPython/PyTorchを抱えず、WebUIがruntimeを所有し、AUは薄いaudio headとして接続します。
 >
-> Development roadmap: [#1 — Port RVCRealtime to macOS Audio Unit](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/1)
->
-> Current climb: platform audit → macOS process/IPC abstraction → macOS build → Audio Unit target → worker/runtime integration → Logic/GarageBand validation → upstream PR.
->
-> Character-specific models, presets, and training data are **not** part of this port and are not bundled here. iPad/AUv3 is a possible later investigation after the macOS AU path is stable.
+> 開発正本: [Issue #1 — RVC realtimeをmacOS Audio Unitへ移植しWebUI runtimeへ統合する](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/1)
+
+# macOS / Audio Unit登攀版
+
+![GarageBandでRVCRealtime AUを標準offline Bounce中](assets/fusamofu-img/AUv2inside.png)
+
+上流のWindows VST実装を単に起動しただけではありません。このforkでは、CPU学習・推論、共有RVC engine、Audio Unit、stream protocol、WebUI所有runner、異常終了Recoveryまでを一つの経路として実装しました。
+
+## 到達点
+
+| 領域 | 現在の実測 |
+| --- | --- |
+| Intel Mac / Python 3.12 | 前処理、F0/特徴抽出、CPU学習、実モデル推論を確認 |
+| macOS Audio Unit v2 | Release build、codesign、`auval`成功 |
+| GarageBand | AU挿入、実モデル接続、単トラックSolo Bounce、オケ付きMix Bounce成功 |
+| 標準offline render | `OFFLINE`、約1183 ms、`0 drop`、host通知1回を実機画像で確認 |
+| runtime architecture | WebUIがPython/RVC processを所有し、AUは`127.0.0.1:17865`のRSVC thin headとして動作 |
+| 死活管理 | 接続中runtimeを3回連続`SIGKILL`してもGarageBandは生存し、3/3でrunner再生成・AU自動再接続・推論復帰 |
+| realtime再生 | Intel CPUでは130 ms blockに対し推論約1.18秒のためプチプチする。未合格 |
+| Bonjour / LAN | 最後の主要実装項目。単一Macでの自己広告・自己発見・選択を本forkの受入点とする |
+
+Human listeningの合格と機械試験は混同していません。詳細receiptは次にあります。
+
+- [GarageBand offline Bounceとオケ付きMixのHuman Gate](experiments/20260904-1015__garageband-offline-bounce-in-progress.ja.md)
+- [runtime 3連続SIGKILLと自動Recovery](experiments/20260904-1055__garageband-runtime-sigkill-recovery.ja.md)
+- [WebUI所有runtimeとasset routing](experiments/20260903-1920__webui-owned-runtime-and-asset-routing.ja.md)
+- [macOS AU thin head build/deploy](experiments/20260903-1848__macos-au-rsvc-thin-head-build-deploy.ja.md)
+
+## architecture
+
+```text
+GarageBand / Logic / VST host
+        |
+        | RVCRealtime thin head
+        | audio callbackにPython・model load・process起動を置かない
+        v
+RSVC realtime audio stream
+  localhost: 127.0.0.1:17865
+        |
+        v
+RVC WebUI / controller
+  UI・control: 127.0.0.1:7865
+  health、runner所有、model/index選択、bounded restart
+        |
+        v
+共有RVC realtime engine
+  CPU / CUDAなし / Intel Macを含むbackend
+  model load、HuBERT、F0、SOLA、RMS、推論
+```
+
+GarageBandのsandbox内からPythonをspawnする旧案は廃止しました。runtimeが落ちた場合もGarageBandを巻き込まず、WebUI側が所有processだけを再生成します。通常のaudio callbackはnon-blockingを維持し、hostが標準offline propertyを通知した場合だけ、deadlineのないBounceとして推論完了を待ちます。
+
+## 現在の製品境界
+
+- **offline Bounce:** Intel Mac実機で実用合格。Soloとオケ付きMixを聴感確認済み
+- **realtime monitoring:** 現在のIntel CPUでは性能未達。[Issue #35](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/35)で最適化または高火力remote backendを追跡
+- **Bonjour:** [Issue #29](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/29)でWebUI/controller所有の発見・明示選択を実装予定
+- **model/data:** `.pth`、`.index`、学習素材、生成audioはrepositoryへ同梱しない
+
+## Windows・複数Macの検証資源を募集
+
+Windows VSTの既存sourceとadapter境界は保っていますが、現在の開発者環境にはWindows実機、複数Mac、CUDA機がありません。したがって、この大規模変更後のWindows VST実機互換、別Mac間Bonjour接続、LAN latency/dropは**未検証**です。未検証を互換保証とは書きません。
+
+Windowsまたは複数Macを持つ方は、build結果、DAW、audio device、sample rate、block size、model backend、drop/latencyを添えたIssueまたはPull Requestを歓迎します。「Windowsは大丈夫か」への現在の正確な回答は、資源未提供につきUNKNOWNです。検証可能な人が物資とreceiptを持ち込んでください。
+
+上流へは、platform adapter、macOS AU、WebUI所有runtime、RSVC protocol、CPU/CUDAなしengine、検証資料をreview可能な単位へ分けて提案します。キャラクター固有モデルやlocal pathは含めません。
+
+---
+
+以下は上流RVC WebUIのREADMEです。
 
 <div align="center">
 

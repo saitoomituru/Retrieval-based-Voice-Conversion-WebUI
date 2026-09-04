@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -29,6 +30,12 @@ public:
 
     std::size_t pushInput(const float* samples, std::size_t count) noexcept;
     std::size_t popOutput(float* samples, std::size_t count) noexcept;
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+    void setRenderingOffline(bool offline) noexcept;
+    bool processOffline(const float* input, std::size_t inputCount,
+                        float* output, std::size_t outputCount,
+                        uint32_t timeoutMs = 30000) noexcept;
+#endif
 
     bool isReady() const noexcept { return ready_.load(std::memory_order_acquire); }
     int status() const noexcept { return status_.load(std::memory_order_acquire); }
@@ -70,6 +77,14 @@ private:
     std::atomic<bool> ready_ {false};
 #if defined(__APPLE__)
     std::atomic<uint32_t> audioRingUsers_ {0};
+#endif
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+    std::atomic<bool> renderingOffline_ {false};
+    std::atomic<bool> discontinuous_ {false};
+    std::atomic<uint64_t> renderModeVersion_ {0};
+    std::atomic<uint64_t> appliedRenderModeVersion_ {0};
+    std::condition_variable offlineCv_;
+    std::mutex offlineMutex_;
 #endif
     std::atomic<int> status_ {kStatusOff};
     std::atomic<float> inferMs_ {0.0f};

@@ -33,6 +33,8 @@ constexpr uint32_t kMaxPayloadBytes = 1u << 20;
 constexpr uint32_t kMaxFrames = 131072;
 constexpr uint16_t kStreamPort = 17865;
 constexpr int kIoSliceMs = 50;
+constexpr uint32_t kAudioFlagDiscontinuous = 1u << 0;
+constexpr uint32_t kAudioFlagOffline = 1u << 1;
 
 enum FrameType : uint16_t {
     kHello = 0x0001,
@@ -338,14 +340,81 @@ WorkerClient::WorkerClient()
 WorkerClient::~WorkerClient()
 {
     stopRequested_.store(true, std::memory_order_release);
+    offlineCv_.notify_all();
     if (thread_.joinable())
         thread_.join();
 }
 
 void WorkerClient::setEnabled(const bool enabled) noexcept
 {
-    if (enabled_.exchange(enabled, std::memory_order_acq_rel) != enabled)
+    if (enabled_.exchange(enabled, std::memory_order_acq_rel) != enabled) {
         configVersion_.fetch_add(1, std::memory_order_release);
+        if (!enabled)
+            offlineCv_.notify_all();
+    }
+}
+
+void WorkerClient::setRenderingOffline(const bool offline) noexcept
+{
+    if (renderingOffline_.exchange(offline, std::memory_order_acq_rel) == offline)
+        return;
+    // The management thread owns ring reset. Marking ready=false first prevents
+    // a callback from joining the old generation while that reset is pending.
+    ready_.store(false, std::memory_order_seq_cst);
+    renderModeVersion_.fetch_add(1, std::memory_order_release);
+}
+
+bool WorkerClient::processOffline(const float* const input, const std::size_t inputCount,
+                                  float* const output, const std::size_t outputCount,
+                                  const uint32_t timeoutMs) noexcept
+{
+    if (input == nullptr || output == nullptr || inputCount == 0 || outputCount == 0)
+        return false;
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
+    const uint64_t requestedMode = renderModeVersion_.load(std::memory_order_acquire);
+    std::unique_lock<std::mutex> waitLock(offlineMutex_);
+    if (!offlineCv_.wait_until(waitLock, deadline, [this, requestedMode]() {
+            return stopRequested_.load(std::memory_order_acquire)
+                || !enabled_.load(std::memory_order_acquire)
+                || (ready_.load(std::memory_order_seq_cst)
+                    && appliedRenderModeVersion_.load(std::memory_order_acquire) == requestedMode);
+        })) {
+        droppedBlocks_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (!ready_.load(std::memory_order_seq_cst) || !renderingOffline_.load(std::memory_order_acquire))
+        return false;
+
+    audioRingUsers_.fetch_add(1, std::memory_order_seq_cst);
+    const auto leaveRingGeneration = [this]() {
+        audioRingUsers_.fetch_sub(1, std::memory_order_seq_cst);
+        offlineCv_.notify_all();
+    };
+    if (!ready_.load(std::memory_order_seq_cst)
+        || appliedRenderModeVersion_.load(std::memory_order_acquire) != requestedMode) {
+        leaveRingGeneration();
+        return false;
+    }
+
+    if (!offlineCv_.wait_until(waitLock, deadline, [this, inputCount]() {
+            return !ready_.load(std::memory_order_seq_cst) || inputRing_.writable() >= inputCount;
+        }) || !ready_.load(std::memory_order_seq_cst)
+        || inputRing_.push(input, inputCount) != inputCount) {
+        leaveRingGeneration();
+        droppedBlocks_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (!offlineCv_.wait_until(waitLock, deadline, [this, outputCount]() {
+            return !ready_.load(std::memory_order_seq_cst) || outputRing_.readable() >= outputCount;
+        }) || !ready_.load(std::memory_order_seq_cst)
+        || outputRing_.pop(output, outputCount) != outputCount) {
+        leaveRingGeneration();
+        droppedBlocks_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    leaveRingGeneration();
+    return true;
 }
 
 void WorkerClient::setSampleRate(const double sampleRate) noexcept
@@ -529,13 +598,17 @@ bool WorkerClient::launchWorker(const Paths& paths, const uint64_t)
     droppedBlocks_.store(0, std::memory_order_relaxed);
     inferMs_.store(0.0f, std::memory_order_relaxed);
     setStatus(kStatusReady, "RSVC 127.0.0.1:17865 session " + std::to_string(ipc_->sessionId));
+    appliedRenderModeVersion_.store(renderModeVersion_.load(std::memory_order_acquire),
+                                    std::memory_order_release);
     ready_.store(true, std::memory_order_seq_cst);
+    offlineCv_.notify_all();
     return true;
 }
 
 void WorkerClient::stopWorker()
 {
     ready_.store(false, std::memory_order_seq_cst);
+    offlineCv_.notify_all();
     if (ipc_ && ipc_->fd >= 0) {
         std::vector<unsigned char> close;
         appendU32(close, 1); // engine_off / local reconnect
@@ -596,6 +669,7 @@ bool WorkerClient::processOneBlock()
     }
     if (inputRing_.pop(requestBuffer_.data(), frames) != frames)
         return true;
+    offlineCv_.notify_all();
 
     std::vector<unsigned char> audio;
     audio.reserve(24 + frames * sizeof(float));
@@ -604,7 +678,12 @@ bool WorkerClient::processOneBlock()
     appendU16(audio, 1);
     appendU32(audio, frames);
     appendU64(audio, monotonicNs());
-    appendU32(audio, 0);
+    uint32_t audioFlags = 0;
+    if (discontinuous_.exchange(false, std::memory_order_acq_rel))
+        audioFlags |= kAudioFlagDiscontinuous;
+    if (renderingOffline_.load(std::memory_order_acquire))
+        audioFlags |= kAudioFlagOffline;
+    appendU32(audio, audioFlags);
     for (uint32_t index = 0; index < frames; ++index)
         appendFloat(audio, requestBuffer_[index]);
     const uint32_t sequence = ++ipc_->audioSequence;
@@ -612,7 +691,9 @@ bool WorkerClient::processOneBlock()
     if (!sendAll(ipc_->fd, packFrame(kAudioIn, audio, ipc_->sessionId, sequence), stopRequested_, 3000))
         return false;
 
-    const int timeoutMs = std::max(5000, static_cast<int>(parameters_[kParamBlockMs].load() * 8.0f));
+    const int timeoutMs = (audioFlags & kAudioFlagOffline) != 0
+        ? 30000
+        : std::max(5000, static_cast<int>(parameters_[kParamBlockMs].load() * 8.0f));
     const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
     while (!stopRequested_.load(std::memory_order_acquire) && enabled_.load(std::memory_order_acquire)
            && Clock::now() < deadline) {
@@ -642,7 +723,12 @@ bool WorkerClient::processOneBlock()
                 continue;
             }
             if (frame.type == kAudioSkip && frame.sequence == sequence) {
+                if ((audioFlags & kAudioFlagOffline) != 0) {
+                    setStatus(kStatusError, "RSVC skipped an offline render block");
+                    return false;
+                }
                 outputRing_.pushZeros(frames);
+                offlineCv_.notify_all();
                 droppedBlocks_.fetch_add(1, std::memory_order_relaxed);
                 return true;
             }
@@ -651,7 +737,8 @@ bool WorkerClient::processOneBlock()
                     || readU32(frame.payload.data()) != static_cast<uint32_t>(sampleRate_.load())
                     || readU16(frame.payload.data() + 4) != 1
                     || readU16(frame.payload.data() + 6) != 1
-                    || readU32(frame.payload.data() + 8) != frames)
+                    || readU32(frame.payload.data() + 8) != frames
+                    || readU32(frame.payload.data() + 20) != audioFlags)
                     return false;
                 for (uint32_t index = 0; index < frames; ++index)
                     responseBuffer_[index] = readFloat(frame.payload.data() + 24 + index * sizeof(float));
@@ -659,6 +746,7 @@ bool WorkerClient::processOneBlock()
                                std::memory_order_relaxed);
                 if (outputRing_.push(responseBuffer_.data(), frames) != frames)
                     droppedBlocks_.fetch_add(1, std::memory_order_relaxed);
+                offlineCv_.notify_all();
                 return true;
             }
             if (frame.type == kError || frame.type == kClose)
@@ -704,6 +792,19 @@ void WorkerClient::threadMain()
             setStatus(kStatusError, "RSVC connection lost; reconnecting");
             stopWorker();
             continue;
+        }
+        const uint64_t requestedMode = renderModeVersion_.load(std::memory_order_acquire);
+        if (appliedRenderModeVersion_.load(std::memory_order_acquire) != requestedMode) {
+            ready_.store(false, std::memory_order_seq_cst);
+            offlineCv_.notify_all();
+            waitForAudioRingUsers();
+            inputRing_.resetUnsafe();
+            outputRing_.resetUnsafe();
+            outputRing_.pushZeros(latencyFrames_.load(std::memory_order_relaxed));
+            discontinuous_.store(true, std::memory_order_release);
+            appliedRenderModeVersion_.store(requestedMode, std::memory_order_release);
+            ready_.store(true, std::memory_order_seq_cst);
+            offlineCv_.notify_all();
         }
         if (inputRing_.readable() < blockFrames_.load(std::memory_order_relaxed))
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

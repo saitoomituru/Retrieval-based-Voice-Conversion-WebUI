@@ -246,6 +246,11 @@ class RVCStreamEngine:
         if self.torch.device(self.config.device).type == "cuda":
             self.torch.cuda.synchronize(self.config.device)
 
+        self.reset_stream_state()
+
+    def reset_stream_state(self) -> None:
+        """Discard temporal context after an explicit stream discontinuity."""
+
         self.input_wav.zero_()
         self.input_wav_res.zero_()
         self.rms_buffer.fill(0.0)

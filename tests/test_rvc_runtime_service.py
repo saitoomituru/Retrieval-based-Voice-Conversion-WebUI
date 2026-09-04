@@ -5,7 +5,15 @@ import time
 import unittest
 
 from rvc_runtime_service import Runtime, recv_frame, serve_client
-from rvc_stream_protocol import AUDIO_FLAG_OFFLINE, Frame, FrameType, pack_audio, pack_frame, unpack_audio
+from rvc_stream_protocol import (
+    AUDIO_FLAG_DISCONTINUOUS,
+    AUDIO_FLAG_OFFLINE,
+    Frame,
+    FrameType,
+    pack_audio,
+    pack_frame,
+    unpack_audio,
+)
 
 
 def text(value: str) -> bytes:
@@ -70,6 +78,32 @@ class RuntimeServiceTest(unittest.TestCase):
         response = recv_frame(client)
         self.assertEqual(response.frame_type, FrameType.AUDIO_OUT)
         self.assertEqual(unpack_audio(response.payload)[3], AUDIO_FLAG_OFFLINE)
+        client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
+        worker.join(1)
+
+    def test_discontinuity_resets_engine_before_processing(self):
+        calls = []
+
+        class ResettableEngine:
+            def reset_stream_state(self):
+                calls.append("reset")
+
+            def process(self, audio, *_args):
+                calls.append("process")
+                return audio
+
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        worker = threading.Thread(
+            target=serve_client, args=(server, Runtime(ResettableEngine)), daemon=True
+        )
+        worker.start()
+        session_id = open_session(client)
+        payload = pack_audio(48000, [0.0] * 8, flags=AUDIO_FLAG_DISCONTINUOUS)
+        client.sendall(pack_frame(Frame(FrameType.AUDIO_IN, payload, session_id, 1)))
+        self.assertEqual(recv_frame(client).frame_type, FrameType.AUDIO_OUT)
+        self.assertEqual(calls, ["reset", "process"])
         client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
         worker.join(1)
 

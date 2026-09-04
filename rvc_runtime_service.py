@@ -13,6 +13,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from rvc_stream_protocol import (
+    AUDIO_FLAG_DISCONTINUOUS,
     AUDIO_FLAG_OFFLINE,
     HEADER,
     Frame,
@@ -172,6 +173,10 @@ def _run_inference(
         frame, frames, timestamp_ns, flags, pcm = item
         try:
             values = struct.unpack("<" + "f" * frames, pcm)
+            if flags & AUDIO_FLAG_DISCONTINUOUS:
+                reset = getattr(engine, "reset_stream_state", None)
+                if reset is not None:
+                    reset()
             output = engine.process(values, 0.0, 0.0, 0.0, 0.5, -60.0, 0)
             payload = pack_audio(sample_rate, output, timestamp_ns=timestamp_ns, flags=flags)
             try:

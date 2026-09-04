@@ -11,6 +11,7 @@ from rvc_stream_protocol import (
     Frame,
     FrameType,
     pack_audio,
+    pack_config_update,
     pack_frame,
     unpack_audio,
 )
@@ -78,6 +79,55 @@ class RuntimeServiceTest(unittest.TestCase):
         response = recv_frame(client)
         self.assertEqual(response.frame_type, FrameType.AUDIO_OUT)
         self.assertEqual(unpack_audio(response.payload)[3], AUDIO_FLAG_OFFLINE)
+        client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
+        worker.join(1)
+
+    def test_config_update_applies_to_next_audio_block(self):
+        calls = []
+
+        class RecordingEngine:
+            def process(self, audio, *parameters):
+                calls.append(parameters)
+                return audio
+
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        worker = threading.Thread(
+            target=serve_client, args=(server, Runtime(RecordingEngine)), daemon=True
+        )
+        worker.start()
+        session_id = open_session(client)
+        config = pack_config_update(12.0, -1.5, 0.75, 0.25, -42.0, 2)
+        client.sendall(pack_frame(Frame(FrameType.CONFIG_UPDATE, config, session_id, 1)))
+        ack = recv_frame(client)
+        self.assertEqual((ack.frame_type, ack.sequence), (FrameType.CONFIG_ACK, 1))
+        self.assertEqual(struct.unpack("<I", ack.payload), (0,))
+        client.sendall(
+            pack_frame(
+                Frame(FrameType.AUDIO_IN, pack_audio(48000, [0.0] * 8), session_id, 1)
+            )
+        )
+        self.assertEqual(recv_frame(client).frame_type, FrameType.AUDIO_OUT)
+        self.assertEqual(calls, [(12.0, -1.5, 0.75, 0.25, -42.0, 2)])
+        client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
+        worker.join(1)
+
+    def test_config_update_rejects_invalid_and_stale_sequences(self):
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        worker = threading.Thread(target=serve_client, args=(server, Runtime()), daemon=True)
+        worker.start()
+        session_id = open_session(client)
+        valid = pack_config_update(0.0, 0.0, 0.0, 0.5, -60.0, 0)
+        invalid = pack_config_update(25.0, 0.0, 0.0, 0.5, -60.0, 0)
+        client.sendall(pack_frame(Frame(FrameType.CONFIG_UPDATE, invalid, session_id, 1)))
+        self.assertEqual(struct.unpack("<I", recv_frame(client).payload), (1,))
+        client.sendall(pack_frame(Frame(FrameType.CONFIG_UPDATE, valid, session_id, 2)))
+        self.assertEqual(struct.unpack("<I", recv_frame(client).payload), (0,))
+        client.sendall(pack_frame(Frame(FrameType.CONFIG_UPDATE, valid, session_id, 2)))
+        self.assertEqual(struct.unpack("<I", recv_frame(client).payload), (2,))
         client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
         worker.join(1)
 

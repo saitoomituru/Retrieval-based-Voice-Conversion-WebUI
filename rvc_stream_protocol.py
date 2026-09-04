@@ -19,6 +19,7 @@ MAX_FRAMES = 131072
 AUDIO_FLAG_DISCONTINUOUS = 1 << 0
 AUDIO_FLAG_OFFLINE = 1 << 1
 AUDIO_FLAGS_KNOWN = AUDIO_FLAG_DISCONTINUOUS | AUDIO_FLAG_OFFLINE
+CONFIG_UPDATE = struct.Struct("<fffffI")
 
 
 class FrameType(IntEnum):
@@ -117,3 +118,24 @@ def unpack_audio(payload: bytes) -> tuple[int, int, int, int, bytes]:
     if len(pcm) != frames * channels * 4:
         raise ValueError("RSVC audio frame length mismatch")
     return sample_rate, frames, timestamp_ns, flags, pcm
+
+
+def pack_config_update(
+    pitch: float,
+    formant: float,
+    index_rate: float,
+    rms_mix: float,
+    threshold: float,
+    f0_method: int,
+) -> bytes:
+    """Pack the fixed 24-byte RSVC v1 hot-parameter payload."""
+
+    return CONFIG_UPDATE.pack(
+        pitch, formant, index_rate, rms_mix, threshold, f0_method
+    )
+
+
+def unpack_config_update(payload: bytes) -> tuple[float, float, float, float, float, int]:
+    if len(payload) != CONFIG_UPDATE.size:
+        raise ValueError("invalid CONFIG_UPDATE payload size")
+    return CONFIG_UPDATE.unpack(payload)

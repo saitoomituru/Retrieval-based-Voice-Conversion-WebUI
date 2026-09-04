@@ -4,11 +4,14 @@ import unittest
 from rvc_stream_protocol import (
     AUDIO_FLAG_OFFLINE,
     AUDIO_HEADER,
+    CONFIG_UPDATE,
     Frame,
     FrameType,
     pack_audio,
+    pack_config_update,
     pack_frame,
     unpack_audio,
+    unpack_config_update,
     unpack_frame,
 )
 
@@ -43,6 +46,18 @@ class StreamProtocolTest(unittest.TestCase):
         self.assertEqual(len(payload), AUDIO_HEADER.size + 4)
         with self.assertRaisesRegex(ValueError, "audio flags"):
             unpack_audio(bytes(payload))
+
+    def test_config_update_payload_round_trip(self):
+        payload = pack_config_update(12.0, -1.5, 0.75, 0.25, -42.0, 2)
+        self.assertEqual(len(payload), CONFIG_UPDATE.size)
+        self.assertEqual(
+            unpack_config_update(payload),
+            (12.0, -1.5, 0.75, 0.25, -42.0, 2),
+        )
+
+    def test_rejects_wrong_config_update_size(self):
+        with self.assertRaisesRegex(ValueError, "payload size"):
+            unpack_config_update(b"short")
 
 
 if __name__ == "__main__":

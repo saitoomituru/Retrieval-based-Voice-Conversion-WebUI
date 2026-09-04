@@ -10,6 +10,7 @@ import socket
 import struct
 import threading
 import time
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from rvc_stream_protocol import (
@@ -21,6 +22,7 @@ from rvc_stream_protocol import (
     pack_audio,
     pack_frame,
     unpack_audio,
+    unpack_config_update,
     unpack_frame,
 )
 
@@ -28,6 +30,61 @@ LOOPBACK = "127.0.0.1"
 DEFAULT_CONTROL_PORT = 17864
 DEFAULT_STREAM_PORT = 17865
 MAX_IN_FLIGHT = 2
+
+
+@dataclass(frozen=True)
+class SessionConfig:
+    pitch: float = 0.0
+    formant: float = 0.0
+    index_rate: float = 0.0
+    rms_mix: float = 0.5
+    threshold: float = -60.0
+    f0_method: int = 0
+
+    def engine_arguments(self) -> tuple[float, float, float, float, float, int]:
+        return (
+            self.pitch,
+            self.formant,
+            self.index_rate,
+            self.rms_mix,
+            self.threshold,
+            self.f0_method,
+        )
+
+
+class SessionConfigState:
+    """One session's hot parameters; never shared across clients."""
+
+    def __init__(self) -> None:
+        self._config = SessionConfig()
+        self._last_sequence = 0
+        self._lock = threading.Lock()
+
+    def apply(self, sequence: int, payload: bytes) -> int:
+        try:
+            values = unpack_config_update(payload)
+            candidate = SessionConfig(*values)
+        except (ValueError, struct.error):
+            return 1
+        if not (
+            -24.0 <= candidate.pitch <= 24.0
+            and -12.0 <= candidate.formant <= 12.0
+            and 0.0 <= candidate.index_rate <= 1.0
+            and 0.0 <= candidate.rms_mix <= 1.0
+            and -60.0 <= candidate.threshold <= 0.0
+            and candidate.f0_method in (0, 1, 2)
+        ):
+            return 1
+        with self._lock:
+            if sequence == 0 or sequence <= self._last_sequence:
+                return 2
+            self._config = candidate
+            self._last_sequence = sequence
+        return 0
+
+    def snapshot(self) -> SessionConfig:
+        with self._lock:
+            return self._config
 
 
 def _recv_exact(sock: socket.socket, size: int) -> bytes:
@@ -170,14 +227,14 @@ def _run_inference(
         item = requests.get()
         if item is None:
             return
-        frame, frames, timestamp_ns, flags, pcm = item
+        frame, frames, timestamp_ns, flags, pcm, config = item
         try:
             values = struct.unpack("<" + "f" * frames, pcm)
             if flags & AUDIO_FLAG_DISCONTINUOUS:
                 reset = getattr(engine, "reset_stream_state", None)
                 if reset is not None:
                     reset()
-            output = engine.process(values, 0.0, 0.0, 0.0, 0.5, -60.0, 0)
+            output = engine.process(values, *config.engine_arguments())
             payload = pack_audio(sample_rate, output, timestamp_ns=timestamp_ns, flags=flags)
             try:
                 send_frame(Frame(FrameType.AUDIO_OUT, payload, frame.session_id, frame.sequence,
@@ -213,6 +270,7 @@ def serve_client(sock: socket.socket, runtime: Runtime) -> None:
     send_frame(Frame(FrameType.SESSION_ACCEPT, accepted, session_id=session_id))
     requests = queue.Queue(maxsize=MAX_IN_FLIGHT)
     slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
+    session_config = SessionConfigState()
     inference = threading.Thread(
         target=_run_inference,
         args=(engine, requests, send_frame, sample_rate, slots),
@@ -228,12 +286,18 @@ def serve_client(sock: socket.socket, runtime: Runtime) -> None:
             if frame.frame_type is FrameType.HEARTBEAT:
                 send_frame(Frame(FrameType.HEARTBEAT_ACK, session_id=session_id,
                                  sequence=frame.sequence, timestamp_ns=time.monotonic_ns()))
+            elif frame.frame_type is FrameType.CONFIG_UPDATE:
+                status = session_config.apply(frame.sequence, frame.payload)
+                send_frame(Frame(FrameType.CONFIG_ACK, struct.pack("<I", status), session_id,
+                                 frame.sequence, time.monotonic_ns()))
             elif frame.frame_type is FrameType.AUDIO_IN:
                 rate, frames, timestamp_ns, flags, pcm = unpack_audio(frame.payload)
                 if rate != sample_rate or frames != block_frames:
                     raise ValueError("audio configuration mismatch")
                 if slots.acquire(blocking=False):
-                    requests.put_nowait((frame, frames, timestamp_ns, flags, pcm))
+                    requests.put_nowait(
+                        (frame, frames, timestamp_ns, flags, pcm, session_config.snapshot())
+                    )
                 else:
                     skipped = struct.pack("<II", frame.sequence, 1)
                     send_frame(Frame(FrameType.AUDIO_SKIP, skipped, session_id, frame.sequence,

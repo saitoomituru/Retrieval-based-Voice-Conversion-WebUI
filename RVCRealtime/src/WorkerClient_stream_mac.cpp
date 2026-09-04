@@ -43,6 +43,8 @@ enum FrameType : uint16_t {
     kSessionOpen = 0x0010,
     kSessionAccept = 0x0011,
     kSessionReject = 0x0012,
+    kConfigUpdate = 0x0020,
+    kConfigAck = 0x0021,
     kAudioIn = 0x0030,
     kAudioOut = 0x0031,
     kAudioSkip = 0x0032,
@@ -163,6 +165,7 @@ struct WorkerClient::Ipc {
     uint32_t sessionId = 0;
     uint32_t audioSequence = 0;
     uint32_t heartbeatSequence = 0;
+    uint32_t configSequence = 0;
     uint32_t maxInFlight = 1;
     Clock::time_point nextHeartbeat {};
     Clock::time_point lastHeartbeatAck {};
@@ -432,9 +435,14 @@ void WorkerClient::setParameter(const ParameterId id, const float value) noexcep
     if (id >= kParameterCount)
         return;
     const float old = parameters_[id].exchange(value, std::memory_order_relaxed);
-    if ((id == kParamBlockMs || id == kParamCrossfadeMs || id == kParamExtraMs)
-        && std::abs(old - value) > 0.01f)
+    if (std::abs(old - value) <= 0.0001f)
+        return;
+    if (id == kParamBlockMs || id == kParamCrossfadeMs || id == kParamExtraMs) {
         configVersion_.fetch_add(1, std::memory_order_release);
+    } else if (id == kParamPitch || id == kParamFormant || id == kParamIndexRate
+               || id == kParamRmsMix || id == kParamThreshold || id == kParamF0Method) {
+        parameterVersion_.fetch_add(1, std::memory_order_release);
+    }
 }
 
 void WorkerClient::setPath(const StateId id, const char* const value)
@@ -592,6 +600,12 @@ bool WorkerClient::launchWorker(const Paths& paths, const uint64_t)
     ipc_->nextHeartbeat = Clock::now() + std::chrono::seconds(1);
     ipc_->lastHeartbeatAck = Clock::now();
 
+    if (!applyParameters(parameterVersion_.load(std::memory_order_acquire))) {
+        setStatus(kStatusError, "RSVC CONFIG_UPDATE rejected");
+        stopWorker();
+        return false;
+    }
+
     // Only the management thread waits. The audio callback never spins or locks.
     waitForAudioRingUsers();
     inputRing_.resetUnsafe();
@@ -605,6 +619,47 @@ bool WorkerClient::launchWorker(const Paths& paths, const uint64_t)
     ready_.store(true, std::memory_order_seq_cst);
     offlineCv_.notify_all();
     return true;
+}
+
+bool WorkerClient::applyParameters(const uint64_t)
+{
+    if (!ipc_ || ipc_->sessionId == 0)
+        return false;
+    std::vector<unsigned char> config;
+    config.reserve(24);
+    appendFloat(config, parameters_[kParamPitch].load(std::memory_order_relaxed));
+    appendFloat(config, parameters_[kParamFormant].load(std::memory_order_relaxed));
+    appendFloat(config, parameters_[kParamIndexRate].load(std::memory_order_relaxed));
+    appendFloat(config, parameters_[kParamRmsMix].load(std::memory_order_relaxed));
+    appendFloat(config, parameters_[kParamThreshold].load(std::memory_order_relaxed));
+    const float rawF0 = parameters_[kParamF0Method].load(std::memory_order_relaxed);
+    appendU32(config, static_cast<uint32_t>(std::clamp(std::lround(rawF0), 0l, 2l)));
+    const uint32_t sequence = ++ipc_->configSequence;
+    if (!sendAll(ipc_->fd, packFrame(kConfigUpdate, config, ipc_->sessionId, sequence),
+                 stopRequested_, 1000))
+        return false;
+
+    const auto deadline = Clock::now() + std::chrono::milliseconds(1000);
+    while (Clock::now() < deadline) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - Clock::now()).count();
+        WireFrame reply;
+        if (!receiveFrame(*ipc_, reply, stopRequested_, static_cast<int>(remaining)))
+            return false;
+        if (reply.sessionId != ipc_->sessionId)
+            return false;
+        if (reply.type == kHeartbeatAck) {
+            ipc_->lastHeartbeatAck = Clock::now();
+            continue;
+        }
+        if (reply.type == kConfigAck && reply.sequence == sequence
+            && reply.payload.size() == 4)
+            return readU32(reply.payload.data()) == 0;
+        if (reply.type == kError || reply.type == kClose)
+            return false;
+        return false;
+    }
+    return false;
 }
 
 void WorkerClient::stopWorker()
@@ -764,6 +819,7 @@ bool WorkerClient::processOneBlock()
 void WorkerClient::threadMain()
 {
     uint64_t activeVersion = 0;
+    uint64_t activeParameterVersion = 0;
     int backoffMs = 200;
     while (!stopRequested_.load(std::memory_order_acquire)) {
         if (!enabled_.load(std::memory_order_acquire)) {
@@ -788,7 +844,17 @@ void WorkerClient::threadMain()
                 backoffMs = std::min(backoffMs * 2, 5000);
                 continue;
             }
+            activeParameterVersion = parameterVersion_.load(std::memory_order_acquire);
             backoffMs = 200;
+        }
+        const uint64_t requestedParameterVersion = parameterVersion_.load(std::memory_order_acquire);
+        if (requestedParameterVersion != activeParameterVersion) {
+            if (!applyParameters(requestedParameterVersion)) {
+                setStatus(kStatusError, "RSVC parameter update failed; reconnecting");
+                stopWorker();
+                continue;
+            }
+            activeParameterVersion = requestedParameterVersion;
         }
         if (!processOneBlock()) {
             setStatus(kStatusError, "RSVC connection lost; reconnecting");

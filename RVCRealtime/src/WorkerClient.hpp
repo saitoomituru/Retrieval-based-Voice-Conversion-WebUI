@@ -58,6 +58,7 @@ private:
 
     void threadMain();
     bool launchWorker(const Paths& paths, uint64_t version);
+    bool applyParameters(uint64_t version);
     void stopWorker();
     bool processOneBlock();
     Paths pathsSnapshot() const;
@@ -95,6 +96,7 @@ private:
     std::atomic<uint32_t> latencyFrames_ {12480};
     std::atomic<double> sampleRate_ {48000.0};
     std::atomic<uint64_t> configVersion_ {1};
+    std::atomic<uint64_t> parameterVersion_ {1};
 
     mutable std::mutex pathsMutex_;
     Paths paths_;

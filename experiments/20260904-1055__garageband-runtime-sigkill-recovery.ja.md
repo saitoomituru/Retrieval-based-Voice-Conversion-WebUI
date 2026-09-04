@@ -1,10 +1,33 @@
-# 実験票: GarageBand接続中runtime 3連続SIGKILL復旧
+# 実験票: live-host fault-injection test — GarageBand接続中runtime 3連続SIGKILL復旧
 
 実施時刻: 2026-09-04 10:55から10:57 JST
 
 ## 目的
 
 GarageBandでRVCRealtime AUがRSVC runtimeへ接続中に、WebUIが所有するruntime processだけを異常終了させ、GarageBandがprocess crashせず、WebUI supervisorがboundedにruntimeを再生成し、AUが自動再接続するか確認する。
+
+## テスト設計の位置づけ
+
+これは「偶発的にprocessが落ちても運よく戻った」観察でも、全bugを薄く数える
+網羅試験でもない。人間が実際にGarageBandを操作しAUを接続しているlive hostへ、
+別の操作者であるCodexが対象runtimeのPIDと親子関係を毎回解決したうえで
+`SIGKILL`を注入する **live-host fault-injection test** である。
+
+狙いはbug総量の最小化ではなく、host巻き込みcrash、孤児process、重複listener、
+無限restart、再接続不能という、遭遇頻度とは別に制作sessionを壊す影響が大きい
+故障境界を選択的に踏むことにある。したがって3/3は全体品質の統計推定ではなく、
+明示した故障モデルに対して同じ回復不変条件が3回成立した観測値である。
+
+検証する不変条件は次の通り。
+
+- DAW hostはruntimeの寿命から分離され、同一PIDで生存する
+- supervisorは自分が所有するruntimeだけをboundedに再生成する
+- 旧listenerや孤児processを残さず、単一listenerへ収束する
+- AUは挿し直しなしで新sessionへ再接続する
+- 復旧はport LISTENだけでなく、model/RMVPE loadと後続推論まで到達する
+
+一方、この試験は全パラメータ、全host、長時間運転、リアルタイム音質を網羅しない。
+それらを合格したことにはしない。
 
 ## 対象
 

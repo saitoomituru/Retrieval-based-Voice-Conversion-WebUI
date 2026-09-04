@@ -20,14 +20,14 @@
 | GarageBand | AU挿入、実モデル接続、単トラックSolo Bounce、オケ付きMix Bounce成功 |
 | 標準offline render | `OFFLINE`、約1183 ms、`0 drop`、host通知1回を実機画像で確認 |
 | runtime architecture | WebUIがPython/RVC processを所有し、AUは`127.0.0.1:17865`のRSVC thin headとして動作 |
-| 死活管理 | 接続中runtimeを3回連続`SIGKILL`してもGarageBandは生存し、3/3でrunner再生成・AU自動再接続・推論復帰 |
+| 死活管理 | **live-host fault-injection test**: 操作中のGarageBandへ接続したruntimeだけを3回連続`SIGKILL`し、host生存、3/3のrunner再生成、AU自動再接続、推論復帰を確認 |
 | realtime再生 | Intel CPUでは130 ms blockに対し推論約1.18秒のためプチプチする。未合格 |
 | Bonjour / LAN | 最後の主要実装項目。単一Macでの自己広告・自己発見・選択を本forkの受入点とする |
 
 Human listeningの合格と機械試験は混同していません。詳細receiptは次にあります。
 
 - [GarageBand offline Bounceとオケ付きMixのHuman Gate](experiments/20260904-1015__garageband-offline-bounce-in-progress.ja.md)
-- [runtime 3連続SIGKILLと自動Recovery](experiments/20260904-1055__garageband-runtime-sigkill-recovery.ja.md)
+- [live-host fault-injection test: runtime 3連続SIGKILLと自動Recovery](experiments/20260904-1055__garageband-runtime-sigkill-recovery.ja.md)
 - [WebUI所有runtimeとasset routing](experiments/20260903-1920__webui-owned-runtime-and-asset-routing.ja.md)
 - [macOS AU thin head build/deploy](experiments/20260903-1848__macos-au-rsvc-thin-head-build-deploy.ja.md)
 

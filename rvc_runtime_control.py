@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import quote, unquote
 
 from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
 from rvc_runtime_gateway import RsvcGateway
@@ -78,12 +79,42 @@ class RuntimeRouterControl:
                 self.wfile.write(body)
 
             def do_GET(self):
+                if self.path == "/v1/runtimes.txt":
+                    snapshot = owner.snapshot()
+                    lines = [
+                        "RSVC-CONTROL/1",
+                        "selected\t" + quote(str(snapshot["selected"]), safe=""),
+                    ]
+                    lines.extend("choice\t" + quote(choice, safe="") for choice in snapshot["choices"])
+                    body = ("\n".join(lines) + "\n").encode("ascii")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=us-ascii")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if self.path != "/v1/runtimes":
                     self._json(404, {"error": "not found"})
                     return
                 self._json(200, owner.snapshot())
 
             def do_POST(self):
+                if self.path == "/v1/select-text":
+                    try:
+                        length = int(self.headers.get("Content-Length", "0"))
+                        if length <= 0 or length > MAX_REQUEST_BYTES:
+                            raise ValueError("invalid request size")
+                        choice = unquote(self.rfile.read(length).decode("ascii"))
+                        owner.select(choice)
+                        body = b"OK\n"
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/plain; charset=us-ascii")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    except (OSError, RuntimeError, UnicodeError, ValueError) as error:
+                        self._json(400, {"error": str(error)})
+                    return
                 if self.path != "/v1/select":
                     self._json(404, {"error": "not found"})
                     return
@@ -119,4 +150,3 @@ class RuntimeRouterControl:
             self._thread.join(timeout=1.0)
         self._server = None
         self._thread = None
-

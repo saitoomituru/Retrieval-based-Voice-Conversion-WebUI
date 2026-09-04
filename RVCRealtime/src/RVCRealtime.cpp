@@ -2,6 +2,9 @@
 #include "IPlug_include_in_plug_src.h"
 #include "IPlugPaths.h"
 #include "IControls.h"
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+#include "RuntimeControlClient.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -283,6 +286,80 @@ private:
 };
 #endif
 
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+class RVCRuntimeMenuControl final : public IControl
+{
+public:
+  explicit RVCRuntimeMenuControl(const IRECT& bounds)
+  : IControl(bounds)
+  {
+  }
+
+  void Draw(IGraphics& graphics) override
+  {
+    graphics.FillRect(kPanel, mRECT);
+    const IRECT nameBounds(mRECT.L + 14.f, mRECT.T + 8.f, mRECT.R - 150.f, mRECT.T + 34.f);
+    const IRECT detailBounds(mRECT.L + 14.f, mRECT.T + 36.f, mRECT.R - 14.f, mRECT.B - 6.f);
+    const IRECT buttonBounds(mRECT.R - 138.f, mRECT.T + 8.f, mRECT.R - 8.f, mRECT.T + 36.f);
+    graphics.DrawText(IText(13.f, kText, "Roboto-Regular", EAlign::Near), mDisplay.c_str(), nameBounds);
+    graphics.DrawText(IText(10.f, kMuted, "Roboto-Regular", EAlign::Near), mDetail.c_str(), detailBounds);
+    graphics.FillRect(kAccent, buttonBounds);
+    graphics.DrawText(IText(11.f, kText, "Roboto-Regular"), "SCAN / SELECT \xE2\x96\xBE", buttonBounds);
+  }
+
+  void OnMouseDown(float, float, const IMouseMod&) override
+  {
+    const rvc::RuntimeChoices result = mClient.list();
+    if (!result.error.empty()) {
+      mDisplay = "RUNTIME CONTROL OFFLINE";
+      mDetail = result.error;
+      SetDirty(false);
+      return;
+    }
+    mChoices = result.choices;
+    mMenu.Clear();
+    for (size_t index = 0; index < mChoices.size(); ++index) {
+      const bool selected = mChoices[index] == result.selected;
+      mMenu.AddItem(mChoices[index].c_str(), -1,
+                    selected ? IPopupMenu::Item::kChecked : IPopupMenu::Item::kNoFlags);
+    }
+    mDisplay = result.selected.empty() ? "SELECT RUNTIME ENGINE" : result.selected;
+    mDetail = std::to_string(mChoices.size()) + " engine(s) detected by WebUI controller";
+    GetUI()->CreatePopupMenu(*this, mMenu, mRECT);
+    SetDirty(false);
+  }
+
+  void OnPopupMenuSelection(IPopupMenu* menu, int) override
+  {
+    if (menu == nullptr || menu->GetChosenItem() == nullptr) {
+      SetDirty(false);
+      return;
+    }
+    const int index = menu->GetChosenItemIdx();
+    if (index < 0 || index >= static_cast<int>(mChoices.size())) {
+      SetDirty(false);
+      return;
+    }
+    std::string error;
+    if (mClient.select(mChoices[static_cast<size_t>(index)], error)) {
+      mDisplay = mChoices[static_cast<size_t>(index)];
+      mDetail = "Selected via 127.0.0.1:17864; new sessions use this engine";
+    } else {
+      mDisplay = "RUNTIME SELECT FAILED";
+      mDetail = error;
+    }
+    SetDirty(false);
+  }
+
+private:
+  rvc::RuntimeControlClient mClient;
+  IPopupMenu mMenu {"RVC runtime engines"};
+  std::vector<std::string> mChoices;
+  std::string mDisplay {"CLICK SCAN / SELECT"};
+  std::string mDetail {"WebUI owns Bonjour discovery; AU requests the shared list"};
+};
+#endif
+
 } // namespace
 
 RVCRealtime::RVCRealtime(const InstanceInfo& info)
@@ -402,8 +479,14 @@ RVCRealtime::RVCRealtime(const InstanceInfo& info)
       graphics->AttachControl(new IVButtonControl(IRECT(700, y, 750, y + rowHeight), action, "...",
                                                   style.WithLabelText(IText(18.f, kText, "Roboto-Regular", EAlign::Center)), true));
     };
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+    graphics->AttachControl(new ITextControl(IRECT(30, 100, 92, 178), "RUNTIME",
+                                              IText(13.f, kMuted, "Roboto-Regular", EAlign::Near)));
+    graphics->AttachControl(new RVCRuntimeMenuControl(IRECT(96, 100, 750, 178)), kCtrlRuntimeMenu);
+#else
     attachFileRow(100.f, "RVC ROOT", kCtrlRvcRoot, PathRow::RvcRoot);
     attachFileRow(142.f, "PYTHON", kCtrlPythonPath, PathRow::Python);
+#endif
     attachFileRow(184.f, "MODEL", kCtrlModelName, PathRow::Model);
     attachFileRow(226.f, "INDEX", kCtrlIndexName, PathRow::Index);
     graphics->AttachControl(new ITextControl(IRECT(96, 266, 750, 290), "Select RVC root and Python runtime",

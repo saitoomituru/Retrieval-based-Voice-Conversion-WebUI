@@ -1,5 +1,6 @@
 import json
 import urllib.request
+from urllib.parse import quote
 import unittest
 from pathlib import Path
 
@@ -43,6 +44,20 @@ class RuntimeRouterControlTest(unittest.TestCase):
         self.assertEqual(payload["selected"], LOCAL_CHOICE)
         self.assertEqual(payload["gateway"]["target"], "127.0.0.1:17866")
         self.assertTrue(payload["gateway"]["local"])
+
+    def test_plain_text_contract_is_safe_for_small_au_client(self):
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{self.control.port}/v1/runtimes.txt", timeout=1
+        ) as response:
+            body = response.read().decode("ascii")
+        self.assertTrue(body.startswith("RSVC-CONTROL/1\n"))
+        self.assertIn("selected\tLocalhost%EF%BC%88%E3%81%93%E3%81%AEWebUI%EF%BC%89", body)
+        encoded = quote(LOCAL_CHOICE, safe="").encode("ascii")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.control.port}/v1/select-text", data=encoded
+        )
+        with urllib.request.urlopen(request, timeout=1) as response:
+            self.assertEqual(response.read(), b"OK\n")
 
 
 if __name__ == "__main__":

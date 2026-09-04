@@ -50,6 +50,7 @@ elseif(APPLE)
         add_compile_definitions(RVC_MAC_LEGACY_EMBEDDED_WORKER=1)
     else()
         set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_stream_mac.cpp)
+        set(RVC_RUNTIME_CONTROL_SOURCE src/RuntimeControlClient_mac.cpp)
     endif()
 else()
     set(RVC_WORKER_CLIENT_SOURCE src/WorkerClient_stub_mac.cpp)
@@ -59,7 +60,9 @@ set(RVC_PLUGIN_SOURCES
     src/RVCRealtime.cpp
     src/RVCRealtime.h
     ${RVC_WORKER_CLIENT_SOURCE}
+    ${RVC_RUNTIME_CONTROL_SOURCE}
     src/WorkerClient.hpp
+    src/RuntimeControlClient.hpp
     src/SpscRing.hpp
     src/RvcParameters.hpp
     config.h

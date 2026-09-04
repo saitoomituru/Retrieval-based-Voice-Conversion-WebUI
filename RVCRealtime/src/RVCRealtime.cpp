@@ -599,8 +599,18 @@ void RVCRealtime::OnIdle()
     status->As<ITextControl>()->SetStr(validationMessage.empty() ? StatusName(mWorker.status()) : "CONFIG ERROR");
   if (auto* detail = GetUI()->GetControlWithTag(kCtrlStatusDetail))
     detail->As<ITextControl>()->SetStr(validationMessage.empty() ? mWorker.statusText().c_str() : validationMessage.c_str());
-  if (auto* performance = GetUI()->GetControlWithTag(kCtrlPerformance))
+  if (auto* performance = GetUI()->GetControlWithTag(kCtrlPerformance)) {
+#if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
+    // GarageBand may suspend editor repainting while it renders. Keep a
+    // process-lifetime latch so the human gate can still verify afterwards
+    // that the host actually asserted the standard offline property.
+    performance->As<ITextControl>()->SetStrFmt(80, "%.0f ms / %.0f drop / %u off",
+                                               mWorker.inferMs(), mWorker.droppedBlocks(),
+                                               mWorker.offlineRenderCount());
+#else
     performance->As<ITextControl>()->SetStrFmt(80, "%.0f ms / %.0f drop", mWorker.inferMs(), mWorker.droppedBlocks());
+#endif
+  }
 #if defined(__APPLE__)
   if (auto* renderMode = GetUI()->GetControlWithTag(kCtrlRenderMode))
     renderMode->As<ITextControl>()->SetStr(GetRenderingOffline() ? "OFFLINE" : "REALTIME");

@@ -32,6 +32,7 @@ public:
     std::size_t popOutput(float* samples, std::size_t count) noexcept;
 #if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
     void setRenderingOffline(bool offline) noexcept;
+    uint32_t offlineRenderCount() const noexcept { return offlineRenderCount_.load(std::memory_order_relaxed); }
     bool processOffline(const float* input, std::size_t inputCount,
                         float* output, std::size_t outputCount,
                         uint32_t timeoutMs = 30000) noexcept;
@@ -80,6 +81,7 @@ private:
 #endif
 #if defined(__APPLE__) && !defined(RVC_MAC_LEGACY_EMBEDDED_WORKER)
     std::atomic<bool> renderingOffline_ {false};
+    std::atomic<uint32_t> offlineRenderCount_ {0};
     std::atomic<bool> discontinuous_ {false};
     std::atomic<uint64_t> renderModeVersion_ {0};
     std::atomic<uint64_t> appliedRenderModeVersion_ {0};

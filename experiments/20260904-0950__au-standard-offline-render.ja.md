@@ -71,8 +71,8 @@ READY frames=6240 latency=12480 infer_ms=1238.79 output_rms=0.0182181 drops=0 bl
 
 1. 新AU componentを配備する。
 2. GarageBandを完全終了して再起動する。
-3. plugin上部の読取専用表示がBounce中に`OFFLINE`へ変わるか確認する。
-4. `OFFLINE`にならなければIssue #33の停止条件を発火し、独自cacheへ拡張しない。
+3. plugin上部の読取専用表示がBounce中に`OFFLINE`へ変わるか、Bounce後のperformance表示が`1 off`以上になるか確認する。
+4. `OFFLINE`にもならず`0 off`のままならIssue #33の停止条件を発火し、独自cacheへ拡張しない。
 5. `OFFLINE`ならBounce結果の非zero音声、drop数、DAW停止の有無を記録する。
 
 ## UNKNOWN
@@ -81,3 +81,17 @@ READY frames=6240 latency=12480 infer_ms=1238.79 output_rms=0.0182181 drops=0 bl
 - GarageBandが30秒/block timeout前の待機を許容するか
 - host latency compensationが末尾12480 framesを常にrenderするか
 - iPlug2の`void ProcessBlock`境界ではtimeoutをOSStatusとしてhostへ返せないため、DAWが失敗をどう表示するか
+
+## 配備receipt
+
+- 配備元: `RVCRealtime/build-macos/out/Release/RVCRealtime.component`
+- 配備先: `~/Library/Audio/Plug-Ins/Components/RVCRealtime.component`
+- 旧component退避先: `/private/tmp/RVCRealtime.component.pre-offline-20260904-0950`
+- 最終build / 配備先binary SHA-256: `216a76f20c397b2f53f6c99b4c4cd58241bdcb4fb84c22617437051ea4d314a9`
+- 旧binary SHA-256: `e570ae13856d79aa62d828f8ab83eb58a1de4b4a35fe5b274c8df243fbb4394d`
+- `AudioComponentRegistrar`再起動: success
+- `auval -v aufx Rvcr Rvcp`: `AU VALIDATION SUCCEEDED`
+- auval render: 512 frames、64-frame slicing、mono、1-to-2 channelを含めてPASS
+- offline propertyの立ち上がり回数をplugin instance内でatomicにラッチし、performance表示末尾の`N off`でBounce後にも観測可能とした。audio callbackからfile I/Oは行わない。
+
+配備後のGarageBand完全再起動と実project BounceはHuman Gateとして未実施。

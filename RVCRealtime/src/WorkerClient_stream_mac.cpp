@@ -358,6 +358,8 @@ void WorkerClient::setRenderingOffline(const bool offline) noexcept
 {
     if (renderingOffline_.exchange(offline, std::memory_order_acq_rel) == offline)
         return;
+    if (offline)
+        offlineRenderCount_.fetch_add(1, std::memory_order_relaxed);
     // The management thread owns ring reset. Marking ready=false first prevents
     // a callback from joining the old generation while that reset is pending.
     ready_.store(false, std::memory_order_seq_cst);

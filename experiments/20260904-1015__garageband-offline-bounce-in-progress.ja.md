@@ -125,3 +125,51 @@ GarageBand processからWebUI所有runtimeへ、loopback RSVC sessionが実際�
 - オケ付きBounce: not-tested
 - offline通知回数、drop表示: not-reported
 - timeline alignment、末尾欠損: not-reported
+
+## 最終追記: 設定初期化後のオケ付きMix Bounce合格
+
+観測時刻: 2026-09-04 10:27から10:45 JST
+
+### 人間による報告
+
+- 設定を初期化し、オケを含むGarageBand標準Bounceを実行した。
+- オケ付きmixの生成音声は完全に聴取可能で、視聴テスト合格だった。
+- realtime再生は引き続きプチプチが発生し不合格だが、標準Bounceでは問題を回避できた。
+
+### 画像から観測した事実
+
+利用者提供のGarageBand Bounce中画像では次を確認した。
+
+- plugin render mode: `OFFLINE`
+- engine status: `READY`
+- performance: `1183 ms / 0 drop / 1 off`
+- RSVC endpoint/session: `127.0.0.1:17865 session 10`
+- model: `zundamon_40k_v2_20260902.pth`
+- index: 空欄
+- GarageBandは複数のオケtrackを含むprojectをBounce中
+
+これにより、GarageBandが標準offline propertyを通知したこと、offline経路で約1.18秒の推論完了を待ち、drop 0で処理したことが視覚的に確認された。
+
+### 終了後の機械観測
+
+- 設定初期化に伴いGarageBandはPID 95008として10:19:52 JSTに再起動されていた。
+- WebUI PID 68905、runtime PID 69192は継続生存した。
+- 10:45:58時点のruntimeはCPU 0.0%、state S。
+- GarageBand PID 95008とruntime PID 69192のRSVC接続はESTABLISHED。pluginがREADYのまま開かれている状態と整合する。
+- GarageBand PID 95008の子processは観測されず、RVC PythonはWebUIの子のまま。
+- runtime logは70行/4603 bytesから98行/6320 bytesへ増加し、最終更新は10:38:44 JST。
+- この試験区間の末尾にはRMVPE loadが1回あり、その後はpitch約0.10から0.12秒の処理へ戻った。設定初期化後sessionのcold loadと整合し、反復reloadの証拠ではない。
+
+### 最終判定
+
+`offline-bounce-human-pass / realtime-fail`
+
+- GarageBand標準offline property通知: pass (`OFFLINE`, `1 off`)
+- offline処理: pass (`1183 ms`, `0 drop`)
+- 単トラックSolo Bounce聴感: human-pass
+- オケ付きMix Bounce聴感: human-pass
+- WebUI所有runtime / GarageBand子Python不存在: pass
+- realtime playback: fail（CPU推論が130 ms block deadlineを超過しプチプチ）
+- Logic Pro / Windows / 別Mac LAN: not-tested
+
+Issue #33の標準offline render目標は達成した。realtime性能は同Issueの非目標どおり別Issueで追跡する。

@@ -46,7 +46,7 @@ flowchart LR
 
 On Windows, the plug-in starts the package's `runtime\python.exe` with `CreateProcessW` and executes `worker\rvc_worker.py`. Audio uses Windows shared memory and named Events.
 
-On macOS, `WorkerClient_stream_mac.cpp` connects only to the localhost RSVC gateway. The WebUI owns the RVC engine runner, model/index selection, Bonjour discovery, health monitoring, and bounded restart. Runtime selection is requested through a localhost control API from the plug-in UI; no Bonjour scan or Python process is placed on the audio thread. The WebUI must currently be started manually; LaunchServices startup is tracked separately.
+On macOS, `WorkerClient_stream_mac.cpp` connects only to the localhost RSVC gateway. The WebUI owns the RVC engine runner, model/index registry, Bonjour discovery, health monitoring, and bounded restart. Runtime and model lists are requested through a localhost control API from the plug-in UI; no Bonjour scan or Python process is placed on the audio thread. The runtime exposes stable opaque model IDs rather than filesystem paths. `active` follows the WebUI default, while an explicit AU model ID takes precedence for that AU session and is carried through `SESSION_OPEN`, including when the gateway targets a remote runtime. Multi-client exclusion, fairness, and per-session resource reservation are not guaranteed by this local-production implementation. The WebUI must currently be started manually; LaunchServices startup is tracked separately.
 
 The Python worker imports the following modules from the RVC root selected by the user:
 
@@ -258,7 +258,7 @@ The plug-in uses Unicode-safe Windows file APIs and supports non-ASCII usernames
 - Effective SOLA overlap: `min(Crossfade, 40 ms)`
 - Reported plug-in latency: twice the Block duration in sample frames
 
-Changes to Block, Crossfade, Context, or sample rate rebuild the processing session. Pitch, Formant, Index, RMS Mix, Gate, and F0 method are hot parameters: Windows transfers them through shared memory, while macOS sends a versioned RSVC `CONFIG_UPDATE` from the management thread. Model and index paths are owned by the WebUI runtime on macOS.
+Changes to Block, Crossfade, Context, sample rate, runtime, or AU model selection rebuild the processing session. Pitch, Formant, Index, RMS Mix, Gate, and F0 method are hot parameters: Windows transfers them through shared memory, while macOS sends a versioned RSVC `CONFIG_UPDATE` from the management thread. Model and index paths are owned by the WebUI runtime on macOS; the AU serializes only `active` or a runtime-issued opaque model ID.
 
 ## Troubleshooting
 

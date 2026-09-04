@@ -69,13 +69,14 @@ RVC WebUI / controller
   model load、HuBERT、F0、SOLA、RMS、推論
 ```
 
-GarageBandのsandbox内からPythonをspawnする旧案は廃止しました。runtimeが落ちた場合もGarageBandを巻き込まず、WebUI側が所有processだけを再生成します。AU画面の`RUNTIME / SCAN / SELECT`はWebUIが検出した一覧をlocalhost control APIから取得するだけで、AU自身はBonjour browseしません。通常のaudio callbackはnon-blockingを維持し、hostが標準offline propertyを通知した場合だけ、deadlineのないBounceとして推論完了を待ちます。
+GarageBandのsandbox内からPythonをspawnする旧案は廃止しました。runtimeが落ちた場合もGarageBandを巻き込まず、WebUI側が所有processだけを再生成します。AU画面の`RUNTIME / SCAN / SELECT`はWebUIが検出した一覧をlocalhost control APIから取得するだけで、AU自身はBonjour browseしません。モデル実パスもruntimeだけが所有し、AUにはopaque IDと表示名だけを返します。`WebUI default`はWebUIの既定モデルへ追従し、AUでモデルを明示選択した場合はそのAU sessionの指定が優先されます。この選択はRSVC `SESSION_OPEN`を通るため、Bonjourで選んだremote runtimeでも同じ契約です。通常のaudio callbackはnon-blockingを維持し、hostが標準offline propertyを通知した場合だけ、deadlineのないBounceとして推論完了を待ちます。
 
 ## 現在の製品境界
 
 - **offline Bounce:** Intel Mac実機で実用合格。Soloとオケ付きMixを聴感確認済み
 - **realtime monitoring:** 現在のIntel CPUでは性能未達。[Issue #35](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/35)で最適化または高火力remote backendを追跡
 - **Bonjour:** WebUI/controller所有の発見・明示選択を実装し、単一Macの自己発見、UI Human Gate、GarageBand AUからself backendの実変換とoffline Bounceまで合格。別Mac実測は外部実機で再開するペインステータス凍結
+- **複数client:** 初期実装はlocal制作環境を対象とし、1 runtimeへ複数AU/Web clientが接続した場合の排他、公平性、資源予約は保証しません。SaaS化する場合はclient session管理とsession単位のworker orchestrationが別途必要です。
 - **model/data:** `.pth`、`.index`、学習素材、生成audioはrepositoryへ同梱しない
 
 ## Windows・複数Macの検証資源を募集

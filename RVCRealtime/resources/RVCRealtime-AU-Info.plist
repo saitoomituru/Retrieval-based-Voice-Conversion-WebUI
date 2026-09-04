@@ -47,8 +47,6 @@
 	<string>0.1.0</string>
 	<key>CSResourcesFileMapped</key>
 	<true/>
-	<key>LSMinimumSystemVersion</key>
-	<string>10.13.0</string>
 	<key>NSPrincipalClass</key>
 	<string>RVCRealtime_View</string>
 </dict>

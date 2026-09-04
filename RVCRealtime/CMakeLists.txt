@@ -79,6 +79,15 @@ iplug_add_plugin(${PROJECT_NAME}
         _UNICODE
         NOMINMAX)
 
+if(TARGET RVCRealtime-app)
+    set_target_properties(RVCRealtime-app PROPERTIES
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.RVCProject.app.RVCRealtime")
+endif()
+if(TARGET RVCRealtime-au)
+    set_target_properties(RVCRealtime-au PROPERTIES
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.RVCProject.audiounit.RVCRealtime")
+endif()
+
 if(TARGET RVCRealtime-vst2)
     target_include_directories(RVCRealtime-vst2 BEFORE PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst2-compat"

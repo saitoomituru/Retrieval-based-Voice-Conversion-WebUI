@@ -48,4 +48,13 @@ for target in ${TARGETS}; do
   cmake --build "${BUILD_DIR}" --target "${target}" --config "${CONFIG}"
 done
 
+for artifact in \
+  "${BUILD_DIR}/out/${CONFIG}/RVCRealtime.app" \
+  "${BUILD_DIR}/out/${CONFIG}/RVCRealtime.component"; do
+  if [ -e "${artifact}" ] && ! codesign --verify --deep --strict "${artifact}" >/dev/null 2>&1; then
+    echo "Applying local ad-hoc signature: ${artifact}"
+    codesign --force --deep --sign - "${artifact}"
+  fi
+done
+
 echo "Built artifacts under: ${BUILD_DIR}/out/${CONFIG}"

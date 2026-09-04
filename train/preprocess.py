@@ -60,6 +60,12 @@ class PreProcess:
         os.makedirs(self.wavs16k_dir, exist_ok=True)
 
     def norm_write(self, tmp_audio, output_key, idx1):
+        if tmp_audio.size == 0:
+            println(
+                i18n("[数据切分][跳过] 空音频片段：%s_%s")
+                % (output_key, idx1)
+            )
+            return False
         tmp_max = np.abs(tmp_audio).max()
         if not np.isfinite(tmp_max) or tmp_max <= 0 or tmp_max > 2.5:
             println(
@@ -92,21 +98,37 @@ class PreProcess:
             # audio = signal.filtfilt(self.bh, self.ah, audio)
             audio = signal.lfilter(self.bh, self.ah, audio)
 
+            chunks = self.slicer.slice(audio)
+            if not chunks:
+                println(
+                    i18n("[数据切分][跳过] 未检测到非静音片段：%s")
+                    % path
+                )
+                return True
+
             idx1 = 0
-            for audio in self.slicer.slice(audio):
+            wrote_any = False
+            for audio in chunks:
                 i = 0
                 while 1:
                     start = int(self.sr * (self.per - self.overlap) * i)
                     i += 1
                     if len(audio[start:]) > self.tail * self.sr:
                         tmp_audio = audio[start : start + int(self.per * self.sr)]
-                        self.norm_write(tmp_audio, output_key, idx1)
+                        wrote_any = (
+                            self.norm_write(tmp_audio, output_key, idx1) or wrote_any
+                        )
                         idx1 += 1
                     else:
                         tmp_audio = audio[start:]
                         idx1 += 1
                         break
-            self.norm_write(tmp_audio, output_key, idx1)
+                wrote_any = self.norm_write(tmp_audio, output_key, idx1) or wrote_any
+            if not wrote_any:
+                println(
+                    i18n("[数据切分][跳过] 有効な音频片段を生成できません：%s")
+                    % path
+                )
             if should_report(progress_index, total):
                 println(
                     i18n("[数据切分] 进度：%s/%s | %s")
@@ -132,6 +154,10 @@ class PreProcess:
             println(
                 i18n("[数据切分] 子任务完成 | 成功：%s | 失败：%s")
                 % (success, failed)
+            )
+        if failed:
+            raise RuntimeError(
+                i18n("数据切分子任务失败：%s个文件") % failed
             )
 
     def pipeline_mp_inp_dir(self, inp_root, n_p):
@@ -164,8 +190,15 @@ class PreProcess:
                     p.start()
                 for i in range(worker_count):
                     ps[i].join()
+                failed_exit_codes = [p.exitcode for p in ps if p.exitcode != 0]
+                if failed_exit_codes:
+                    raise RuntimeError(
+                        i18n("数据切分子进程失败，返回码：%s")
+                        % failed_exit_codes
+                    )
         except Exception:
             println(i18n("[数据切分][失败] %s") % traceback.format_exc())
+            raise
 
     def pipeline_mp_manifest(self, manifest_entries, n_p):
         infos = [
@@ -192,6 +225,11 @@ class PreProcess:
             p.start()
         for p in ps:
             p.join()
+        failed_exit_codes = [p.exitcode for p in ps if p.exitcode != 0]
+        if failed_exit_codes:
+            raise RuntimeError(
+                i18n("数据切分子进程失败，返回码：%s") % failed_exit_codes
+            )
 
 
 def preprocess_trainset(inp_root, sr, n_p, exp_dir, per):

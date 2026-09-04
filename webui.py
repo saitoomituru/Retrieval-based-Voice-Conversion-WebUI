@@ -94,6 +94,7 @@ import subprocess
 import time
 
 from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
+from rvc_runtime_control import RuntimeRouterControl
 from rvc_runtime_gateway import DEFAULT_BACKEND_PORT, RsvcGateway
 from rvc_runtime_supervisor import RvcRuntimeSupervisor
 
@@ -111,8 +112,7 @@ rvc_runtime_supervisor = RvcRuntimeSupervisor(
 )
 rvc_runtime_bonjour = BonjourRuntimeDirectory(Path(now_dir), DEFAULT_BACKEND_PORT)
 rvc_runtime_gateway = RsvcGateway(rvc_runtime_bonjour.local_target())
-_selected_runtime_choice = LOCAL_CHOICE
-_runtime_choice_lock = threading.Lock()
+rvc_runtime_control = RuntimeRouterControl(rvc_runtime_bonjour, rvc_runtime_gateway)
 
 
 def find_available_port(start_port, host="0.0.0.0"):
@@ -289,23 +289,18 @@ def rvc_runtime_status():
 
 
 def refresh_rvc_runtime_choices():
-    with _runtime_choice_lock:
-        selected = _selected_runtime_choice
-    choices = rvc_runtime_bonjour.choices()
+    selected = rvc_runtime_control.selected_choice()
+    choices = rvc_runtime_control.choices()
     value = selected if selected in choices else LOCAL_CHOICE
     return {"choices": choices, "value": value, "__type__": "update"}, rvc_runtime_status()
 
 
 def select_rvc_runtime(choice):
-    global _selected_runtime_choice
     choice = str(choice or LOCAL_CHOICE)
     try:
-        target = rvc_runtime_bonjour.resolve(choice)
+        rvc_runtime_control.select(choice)
     except (OSError, RuntimeError, ValueError) as error:
         return f"ERROR | runtime選択失敗: {error} | {rvc_runtime_status()}"
-    rvc_runtime_gateway.select(target)
-    with _runtime_choice_lock:
-        _selected_runtime_choice = choice
     return rvc_runtime_status()
 
 
@@ -2990,8 +2985,10 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                 rvc_runtime_gateway.start()
                 if platform.system() == "Darwin":
                     rvc_runtime_bonjour.start()
+                rvc_runtime_control.start()
             launch_webui_with_port_fallback(app, config)
         finally:
+            rvc_runtime_control.stop()
             rvc_runtime_bonjour.stop()
             rvc_runtime_gateway.stop()
             rvc_runtime_supervisor.stop()

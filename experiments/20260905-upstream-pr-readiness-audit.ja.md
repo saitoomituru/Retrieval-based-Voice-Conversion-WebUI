@@ -6,9 +6,10 @@ GarageBand Human Gate合格後のforkが、RVC本体とiPlug2のupstream PRを�
 
 ## 対象
 
-- RVC fork `main`: `39e6313`
+- RVC fork `main`: `672aa64`
+- RVC upstream提出用branch: `upstream/macos-au-webui-runtime` / `eaa6b46`
 - RVC upstream: `origin/main`（2026-09-05 fetch）
-- iPlug2 fork: `fix/skip-midi-init-without-midi` / `d37c56917`
+- iPlug2 fork: `fix/skip-midi-init-without-midi` / `cbeba6cff704bdedba74166af6f6ea979bada5df`
 - iPlug2 upstream: `upstream/master`（2026-09-05 fetch）
 - 親Issue: #1、PR準備Issue: #9
 
@@ -16,33 +17,35 @@ GarageBand Human Gate合格後のforkが、RVC本体とiPlug2のupstream PRを�
 
 ### RVC
 
-- upstreamに対して0 commit behind / 96 commit ahead。
-- 総差分は122 files、約11,143 insertions / 218 deletions。
-- `git diff --check origin/main...main` は成功。
+- upstream提出用branchは`origin/main`起点で、71 files、約5,774 insertions / 218 deletions。
+- `git diff --check origin/main...upstream/macos-au-webui-runtime` は成功。
 - tracked model、index、`.venv`、runtime log、TEMPは検出されず、`.gitignore`適用を確認した。
 - 1 MiB以上の追加物はfork広報用画像 `assets/fusamofu-img/AUv2inside.png`（2,969,293 bytes）のみ。
 - 実験票にはlocal absolute pathが含まれるが、汎用source内に新規の開発者固有pathは検出されなかった。上流既存の`infer/rmvpe.py`にはWindows開発path例が残るが今回差分ではない。
-- 全Python回帰43件、macOS AU Release build、codesign、auval、GarageBand offline Bounce、model切替、設定slot復元は合格済み。
+- push済みbranchのclean recursive cloneで全Python回帰43件、macOS APP/AU Release build、codesign、auvalが合格した。
+- GarageBand offline Bounce、model切替、設定slot復元は既存Human Gateで合格済み。
 
 ### iPlug2
 
-- upstreamに対して2 commit behind / 2 commit ahead。
+- 最新`upstream/master`をmerge済みで、実差分は一ファイルだけである。
 - 差分は `IPlug/APP/IPlugAPP_host.cpp` の17追加 / 1削除。
 - `merge-tree --write-tree HEAD upstream/master` はtreeを生成し、text conflictを検出しなかった。
 - fork/upstream双方に同branch由来の既存PRはない。
 - patchはMIDI input/outputを双方無効にしたAPP hostだけでCoreMIDI初期化とnull MIDI device選択をskipする。
 
-## PRを今すぐ送らない理由
+## 提出境界
 
-### blocking
+### 解消したblocking
 
-1. RVC `main`は開発正本であり、Sphere-DOS、fork運用AGENTS、全実験履歴、Grok設計原稿、広報画像、character固有receiptを含む。そのまま上流へ送るとreview不能で、Issue #9の受入条件にも反する。
-2. upstream用の目的branchを`origin/main`から作り、汎用source、tests、最小docsだけを抽出する必要がある。
-3. clean recursive checkoutからのconfigure/build/test receiptがまだない。既存build cacheだけではsubmodule再現性を証明できない。
+1. `origin/main`起点の目的branchへ汎用source、tests、最小docsだけを抽出した。
+2. Sphere-DOS、fork運用AGENTS、実験履歴、外部agent原稿、広報画像、character固有receiptを上流branchから除外した。
+3. 旧macOS embedded Python workerと未実装stubを除外し、WebUI所有RSVC thin headへ一本化した。
+4. push済みbranchを空directoryへrecursive cloneし、全submoduleの取得、43 tests、clean APP/AU build、codesign、auvalを確認した。
+5. recursive clone中に検出したVST SDK gitlink誤記、gitfile誤判定、未署名APP、bundle設定警告を修正して再検証した。
 
 ### 解消済み・方針訂正
 
-- iPlug2 branchは最新`upstream/master`へmergeし、forkの`824f98428`へpushした。upstream比0 behindで、実差分は引き続き`IPlugAPP_host.cpp`一ファイル。
+- iPlug2 branchは最新`upstream/master`へmergeし、forkの`cbeba6cff704bdedba74166af6f6ea979bada5df`へpushした。実差分は引き続き`IPlugAPP_host.cpp`一ファイル。
 - Bonjour/mDNSのsegment到達性、CIDR、越境はOS、network、router、reflectorの責務とする。RVCは独自SaaS認証やsegment policyを抱えず、信頼済み制作LAN前提と非保証範囲を説明する。現行のBonjour/LAN機能をloopback限定へ後退させない。
 - clean checkoutではmodel再学習・長時間training・実モデル再生成を繰り返さない。modelなしdry-run、unit/integration test、CMake configure、APP/AU build、codesign、auvalまでを再現性対象とし、学習・実推論・聴感は既存receiptを参照する。
 
@@ -70,12 +73,10 @@ GarageBand Human Gate合格後のforkが、RVC本体とiPlug2のupstream PRを�
 
 ## 次の実行順
 
-1. iPlug2最新fork pointerでAPP/AU buildを再検証する。
-2. `origin/main`起点のRVC upstream purpose branchを別worktreeに作り、汎用差分だけを抽出する。
-3. clean recursive checkoutでmodelなしdry-run、Python tests、CMake configure、APP/AU build、codesign、auvalを再実行する。
-4. 日本語 + 繁體中文の2件のPR本文draftを、確定branch/commit/test receiptへ合わせて作る。
-5. 利用者review後にのみupstream PRを送信する。
+1. 利用者が日本語 + 繁體中文のRVC PR草案をreviewする。
+2. 利用者が日本語 + 繁體中文のiPlug2 PR草案をreviewする。
+3. 修正指示を反映後、利用者の送信判断で各upstream PRを作る。
 
 ## 結果
 
-`blocked-before-submission`。機能とHuman GateはPR級だが、upstream向け差分抽出と再現性検証が未完了であり、現mainを直接PRにする段階ではない。blockerは実装不成立ではなく提出物の境界整理である。
+`ready-for-human-pr-review`。実装、提出物境界、clean再現性検証、二言語草案まで完了した。Windows、Apple Silicon、Logic Pro、別Mac、realtime性能はPRを止める不具合ではなく、明示済みの資源境界・既知制限・後続課題である。実PRは利用者review前のため未送信。

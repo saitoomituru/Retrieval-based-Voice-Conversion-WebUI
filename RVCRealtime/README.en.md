@@ -1,10 +1,10 @@
-# RVC Realtime VST Developer Guide
+# RVC Realtime Plug-in Developer Guide
 
 [English](./README.en.md) | [简体中文](./README.md)
 
-RVC Realtime VST is a Windows x64 real-time voice conversion plug-in project. The same source tree builds both VST2 and VST3 formats.
+RVC Realtime is a cross-platform voice-conversion plug-in experiment. The same source tree retains the Windows x64 VST2/VST3 path and adds an Intel macOS APP/AUv2 path.
 
-The plug-in is implemented in C++17 with iPlug2. Model loading and RVC inference run in a separate Python worker process. The host audio thread only handles audio buffers, mixing, and lock-free queue operations.
+The plug-in is implemented in C++17 with iPlug2. The host audio thread only handles audio buffers, mixing, and lock-free queue operations. On Windows, model loading and inference run in the existing separate Python worker. On macOS, the AU is a thin audio head connected to a runtime owned by the RVC WebUI; Python, PyTorch, and model loading never run inside GarageBand.
 
 This directory does not include a Python runtime, RVC models, index files, training data, or a complete RVC runtime package. None of these runtime files are required to compile the plug-in.
 
@@ -13,34 +13,40 @@ This directory does not include a Python runtime, RVC models, index files, train
 - Windows 10/11 x64
 - 64-bit VST2 DLL
 - 64-bit VST3 bundle
+- Intel macOS APP and AUv2 component
+- GarageBand standard offline bounce through a real RVC model
 - Mono input/output, mono-to-stereo, and stereo input/output
 - RMVPE, FCPE, and PM F0 methods
 - External 64-bit RVC Python runtime
 - `.pth` models and optional `.index` files
 - 64-bit VST hosts such as Studio One
 
-Windows x86 and Linux plug-in targets are not currently configured. An experimental
-macOS APP (standalone) and AU (AUv2) target now build and load in GarageBand; see
-`docs/macos-build.ja.md`. The macOS worker/IPC bridge is still a stub
-(`src/WorkerClient_stub_mac.cpp`) with no real-time conversion yet.
+Windows x86 and Linux plug-in targets are not currently configured. Apple Silicon,
+Logic Pro, Windows builds after this fork's larger integration, and cross-machine
+Bonjour transport are not tested because the required hardware is unavailable.
+See `docs/macos-build.ja.md` for the measured Intel macOS boundary.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    DAW["64-bit DAW"] --> Plugin["VST2/VST3 C++ plug-in"]
+    DAW["DAW host"] --> Plugin["iPlug2 C++ plug-in"]
     Plugin --> InputRing["Lock-free input ring buffer"]
     InputRing --> Bridge["WorkerClient management thread"]
-    Bridge <--> IPC["Shared memory + Windows Events"]
-    IPC <--> Worker["Separate Python worker"]
+    Bridge --> WIN["Windows: shared memory + Events"]
+    WIN <--> Worker["Legacy separate Python worker"]
+    Bridge --> RSVC["macOS: localhost RSVC stream"]
+    RSVC <--> WebUI["WebUI-owned runtime / Bonjour gateway"]
     Worker --> RVC["External RVC source, model, and CUDA runtime"]
-    Worker --> IPC
+    WebUI --> RVC
     Bridge --> OutputRing["Lock-free output ring buffer"]
     OutputRing --> Plugin
     Plugin --> DAW
 ```
 
-The plug-in starts the package's `runtime\python.exe` with `CreateProcessW` and executes the bundled `worker\rvc_worker.py`. Audio is transferred through Windows shared memory. Named Events synchronize requests and responses. Audio is not transported through network ports, HTTP, or ordinary stdin/stdout pipes.
+On Windows, the plug-in starts the package's `runtime\python.exe` with `CreateProcessW` and executes `worker\rvc_worker.py`. Audio uses Windows shared memory and named Events.
+
+On macOS, `WorkerClient_stream_mac.cpp` connects only to the localhost RSVC gateway. The WebUI owns the RVC engine runner, model/index selection, Bonjour discovery, health monitoring, and bounded restart. Runtime selection is requested through a localhost control API from the plug-in UI; no Bonjour scan or Python process is placed on the audio thread. The WebUI must currently be started manually; LaunchServices startup is tracked separately.
 
 The Python worker imports the following modules from the RVC root selected by the user:
 
@@ -252,7 +258,7 @@ The plug-in uses Unicode-safe Windows file APIs and supports non-ASCII usernames
 - Effective SOLA overlap: `min(Crossfade, 40 ms)`
 - Reported plug-in latency: twice the Block duration in sample frames
 
-Changes to Block, Crossfade, Context, sample rate, or runtime paths rebuild the Python worker. Pitch, Formant, Index, RMS Mix, Gate, and F0 method values are transferred through shared memory while the worker is running.
+Changes to Block, Crossfade, Context, or sample rate rebuild the processing session. Pitch, Formant, Index, RMS Mix, Gate, and F0 method are hot parameters: Windows transfers them through shared memory, while macOS sends a versioned RSVC `CONFIG_UPDATE` from the management thread. Model and index paths are owned by the WebUI runtime on macOS.
 
 ## Troubleshooting
 

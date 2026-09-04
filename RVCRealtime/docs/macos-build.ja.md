@@ -1,10 +1,11 @@
 # macOS向けRVCRealtimeビルド手順
 
-状態: `[ISSUE #4]` `[APP/AU BUILD確認済み]` `[AU実機DAWでの挿入確認済み]` `[実IPC未実装]`
+状態: `[ISSUE #4/#27/#33]` `[APP/AU RELEASE BUILD確認済み]` `[AU実機変換・OFFLINE BOUNCE確認済み]`
 
 この文書は、`RVCRealtime`をmacOS上でconfigure・compileするための手順である。
-実際のRVC worker連携（issue #3/#6）は別文書・別Issueの範囲で、現状の`WorkerClient_stub_mac.cpp`は
-実IPCを行わないGUI確認用のスタブであることに注意する。
+macOS AUは`WorkerClient_stream_mac.cpp`を使う薄いaudio headであり、Pythonやmodelを
+GarageBand内で起動しない。WebUI所有runtimeへlocalhost RSVCで接続する。Windows VSTは
+既存の`WorkerClient_win.cpp`と共有メモリworkerを維持する。
 
 ## toolchain要件
 
@@ -44,7 +45,7 @@ scripts/build-macos.sh --targets "RVCRealtime-app"
 `IPLUG_DEPLOY_PLUGINS OFF`のため、AUは自動配置されない。ローカル確認用に手動でcopyする。
 
 ```zsh
-cp -R build-macos/out/Debug/RVCRealtime.component ~/Library/Audio/Plug-Ins/Components/
+cp -R build-macos/out/Release/RVCRealtime.component ~/Library/Audio/Plug-Ins/Components/
 killall -9 AudioComponentRegistrar 2>/dev/null
 auval -v aufx Rvcr Rvcp
 ```
@@ -57,6 +58,7 @@ auval -v aufx Rvcr Rvcp
 
 ## 既知の制限
 
-- `WorkerClient_stub_mac.cpp`は実IPCを行わない（issue #3/#6で置き換え予定）
+- WebUIを先に手動起動する。AUからWebUIをLaunchServices起動する機能は未実装（issue #28）
+- Intel CPUのrealtime推論はdeadline超過によるdropoutがある。GarageBand標準offline bounceは実機聴感合格（issue #35）
 - Apple Silicon実機未確認
 - Logic Pro実機未確認（GarageBandのみ確認済み、issue #7）

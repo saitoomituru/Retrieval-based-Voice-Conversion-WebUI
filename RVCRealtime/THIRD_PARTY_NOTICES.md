@@ -5,8 +5,11 @@ Each dependency remains under its own license.
 
 ## iPlug2
 
-- Source: https://github.com/iPlug2/iPlug2
-- Locked commit: `5c2df9dce3f5258acfeff3846a6a9563f382212c`
+- Upstream source: https://github.com/iPlug2/iPlug2
+- Fork source: https://github.com/saitoomituru/iPlug2
+- Upstream base commit: `5c2df9dce3f5258acfeff3846a6a9563f382212c`
+- Locked patched commit: `d37c56917a334a033a7bcb2964afd9bf3de65d98`
+- Fork delta: skip APP-host MIDI initialization only when both plug-in MIDI input and output are disabled
 - License: zlib-style license
 - License file: `third_party/iPlug2/LICENSE.txt`
 

@@ -134,42 +134,42 @@ ProcessBlock()                         WorkerClient::threadMain()
 
 ## Key Decisions
 
-1. **Transport は raw TCP。binary WebSocket は採用しない。**  
+1. **Transport は raw TCP。binary WebSocket は採用しない。**
    AU は C++17 の薄い head であり、WebSocket の masking / opcode / HTTP upgrade は価値より実装量が多い。Python 標準の `socket` で fake server が書ける。Gradio が既に 7865 で HTTP/WS を占有しているので、音声を同じ WS に混ぜると queue と資源競合する（#25 の観測対象）。LAN 後段でも TCP の上に同じ frame を載せる。WebSocket へ包む必要が出たら frame は再利用し、transport adapter だけ足す。
 
-2. **既存 SHM worker 契約（magic `0x50564352`, version 1）は凍結。stream は別 magic `0x43565352`（LE バイト列 `RSVC`）。**  
+2. **既存 SHM worker 契約（magic `0x50564352`, version 1）は凍結。stream は別 magic `0x43565352`（LE バイト列 `RSVC`）。**
    誤接続時に両者が互いのバッファを audio と解釈しないため。version 数値を共用しない（SHM は `u32` version、stream は envelope の `u16`）。
 
-3. **制御面と音声面をポートごと分離する。**  
-   制御面: 既存 Gradio HTTP `127.0.0.1:7865`（#25 が `/health` 等を足す）。  
-   音声面: 本契約の TCP `127.0.0.1:17865`（7865 + 10000。衝突しにくく記憶できる）。  
+3. **制御面と音声面をポートごと分離する。**
+   制御面: 既存 Gradio HTTP `127.0.0.1:7865`（#25 が `/health` 等を足す）。
+   音声面: 本契約の TCP `127.0.0.1:17865`（7865 + 10000。衝突しにくく記憶できる）。
    stream は handshake 自己完結とし、fake test が Gradio 無しで動く。
 
-4. **Bind / connect 既定は IPv4 `127.0.0.1` のみ。`0.0.0.0` も `::` も禁止。**  
+4. **Bind / connect 既定は IPv4 `127.0.0.1` のみ。`0.0.0.0` も `::` も禁止。**
    Issue #23 の「localhost は 127.0.0.1 限定を既定」。IPv6 `::1` は GarageBand 許可差が未測のため v1 対象外（Open Questions）。
 
-5. **AUDIO_IN の `frame_count` は session で合意した `block_frames` と一致させる（v1）。**  
+5. **AUDIO_IN の `frame_count` は session で合意した `block_frames` と一致させる（v1）。**
    現行 worker と同じ。AU の host callback（典型 32–1024 frames、**実機 nFrames は未測**）との差は **AU 側 lock-free ring + control thread が集約** する。runtime は SOLA 用に固定長だけ見ればよい。
 
-6. **sequence はアプリケーション層の欠落検出用。late は audio thread の消費 cursor で判定する。TCP 再送は再実装しない。**  
+6. **sequence はアプリケーション層の欠落検出用。late は audio thread の消費 cursor で判定する。TCP 再送は再実装しない。**
    localhost TCP は順序保証する。欠落は「送らなかった（client 入力 drop）」または「server が `AUDIO_SKIP` / seq jump で捨てた」を意味する。late は「その seq のスロットが output ring から既に pop 済み」であり、壁時計だけで決めない。`timestamp_ns` は診断専用で合否に使わない。順序逆転は fake harness が recv キューへ注入する試験項目であり、本番 TCP では起きない。
 
-7. **reconnect は必ず新しい `session_id`。`ready_=false` を先に release してから ring を捨てる。**  
+7. **reconnect は必ず新しい `session_id`。`ready_=false` を先に release してから ring を捨てる。**
    現行 `WorkerClient_mac.cpp` `threadMain()` と同じ precondition: `resetUnsafe` / `pushZeros` 中は audio thread が ring に触れない。
 
-8. **AU は model 実 path / Python executable / RVC root を所有しない。**  
+8. **AU は model 実 path / Python executable / RVC root を所有しない。**
    `SESSION_OPEN` は runtime が発行する opaque `model_id` を使う。fake は `fixture.passthrough` 等。本番の一覧は #25。HELLO_ACK の `caps_json` は v1 で必須（空委譲しない）。
 
-9. **audio thread の許可リストは現行 `ProcessBlock()` と同一。**  
+9. **audio thread の許可リストは現行 `ProcessBlock()` と同一。**
    downmix、`pushInput` / `popOutput`（`ready_==true` のときだけ）、dry delay、mix、`consumed_frames` atomic 加算。禁止: `recv`/`send`/`connect`/`poll`、mutex、`malloc`、Python、ファイル I/O、ログ、`resetUnsafe`。
 
-10. **Windows 互換は「触らない」で守る。adapter 追加のみ。**  
+10. **Windows 互換は「触らない」で守る。adapter 追加のみ。**
     `WorkerClient_win.cpp` / `WorkerClient_mac.cpp` / `rvc_worker.py` を stream 用に書き換えない。`WorkerClient` に純仮想を足さない。CMake の `WIN32` 分岐は維持。
 
-11. **socket I/O と load/infer は別 thread。HEARTBEAT は LOADING 中も infer 中も生きる。**  
+11. **socket I/O と load/infer は別 thread。HEARTBEAT は LOADING 中も infer 中も生きる。**
     runtime は listen/read/write/`HEARTBEAT_ACK` を I/O thread で行い、`engine.prewarm()` / `process()` は infer thread へ渡す。client control thread は単一なら `poll`/`select` で send/recv/timer を多重化し、1 回の stall 上限を `RSVC_IO_SLICE_MS=50` とする。HEARTBEAT の timer 開始点は **`SESSION_ACCEPT` 直後**（この時点で `session_id` が確定する。`session_id=0` の HEARTBEAT は送らない）。3s 未着だけが死であり、180s load や 5s infer 待ちそのものは HEARTBEAT を止めない。v1 の HEARTBEAT は **C→S のみ**。server は `HEARTBEAT_ACK` だけを返す。
 
-12. **server の backpressure drop は session を殺さない。**  
+12. **server の backpressure drop は session を殺さない。**
     捨てた seq は `AUDIO_SKIP` で知らせる。client は `commit_seq(N, pcm=None)` で timer 解除・必要なら 0 を ring へ push・`next_play_seq` を進める。session は READY。infer timeout は「skip も OUT も来ない」ときだけ ERROR にする。
 
 ---

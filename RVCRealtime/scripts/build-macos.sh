@@ -40,18 +40,6 @@ if [ ! -d "${IPLUG2_DIR}/Dependencies/IGraphics/NanoVG" ]; then
   ( cd "${IPLUG2_DIR}/Dependencies" && bash download-prebuilt-libs.sh mac )
 fi
 
-# Local patches on top of the pinned iPlug2 submodule commit (not tracked by a
-# plain `git submodule update`, which would silently drop them on a fresh
-# checkout — see scripts/patches/README.ja.md). Applied idempotently: `git
-# apply --reverse --check` tells us whether a patch is already in place.
-for patch in "${ROOT}"/scripts/patches/*.patch; do
-  [ -e "${patch}" ] || continue
-  if ! git -C "${IPLUG2_DIR}" apply --reverse --check "${patch}" >/dev/null 2>&1; then
-    echo "Applying patch: $(basename "${patch}")"
-    git -C "${IPLUG2_DIR}" apply "${patch}"
-  fi
-done
-
 echo "Configuring (${BUILD_DIR})..."
 cmake -S "${ROOT}" -B "${BUILD_DIR}" -G Xcode
 

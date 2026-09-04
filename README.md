@@ -22,9 +22,9 @@
 | GarageBand | AU挿入、実モデル接続、単トラックSolo Bounce、オケ付きMix Bounce成功 |
 | 標準offline render | `OFFLINE`、約1183 ms、`0 drop`、host通知1回を実機画像で確認 |
 | runtime architecture | WebUIがPython/RVC processを所有し、AUは`127.0.0.1:17865`のRSVC thin headとして動作 |
-| 死活管理 | **live-host fault-injection test**: 操作中のGarageBandへ接続したruntimeだけを3回連続`SIGKILL`し、host生存、3/3のrunner再生成、AU自動再接続、推論復帰を確認 |
+| 死活管理 | **live-host fault-injection test**: runtimeを3回連続`SIGKILL`して自動復旧を確認。さらにWebUIへ`SIGTERM`を注入し、所有runner・gateway・dns-sdの回収を確認 |
 | realtime再生 | Intel CPUでは130 ms blockに対し推論約1.18秒のためプチプチする。未合格 |
-| Bonjour / LAN | WebUI所有の広告・探索、local gateway、自己発見・明示選択、GarageBand AU→gateway→self backend接続まで単一Mac実測・Human Gate合格 |
+| Bonjour / LAN | WebUI所有の広告・探索、local gateway、自己発見・明示選択、GarageBand AU→gateway→self backend→実RVC変換→offline Bounceまで単一Mac実測・Human Gate合格 |
 
 ## デモソング
 
@@ -42,6 +42,8 @@ Human listeningの合格と機械試験は混同していません。詳細recei
 
 - [GarageBand offline Bounceとオケ付きMixのHuman Gate](experiments/20260904-1015__garageband-offline-bounce-in-progress.ja.md)
 - [live-host fault-injection test: runtime 3連続SIGKILLと自動Recovery](experiments/20260904-1055__garageband-runtime-sigkill-recovery.ja.md)
+- [Bonjour切替後の実RVC offline Bounce Human Gate](experiments/20260904-2013__bonjour-route-offline-human-pass.ja.md)
+- [WebUI SIGTERM時の所有process回収](experiments/20260904-2050__webui-sigterm-live-host-fault-injection.ja.md)
 - [WebUI所有runtimeとasset routing](experiments/20260903-1920__webui-owned-runtime-and-asset-routing.ja.md)
 - [macOS AU thin head build/deploy](experiments/20260903-1848__macos-au-rsvc-thin-head-build-deploy.ja.md)
 
@@ -73,7 +75,7 @@ GarageBandのsandbox内からPythonをspawnする旧案は廃止しました。r
 
 - **offline Bounce:** Intel Mac実機で実用合格。Soloとオケ付きMixを聴感確認済み
 - **realtime monitoring:** 現在のIntel CPUでは性能未達。[Issue #35](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/35)で最適化または高火力remote backendを追跡
-- **Bonjour:** WebUI/controller所有の発見・明示選択を実装し、単一Macの自己発見、UI Human Gate、GarageBand AUからself backendまでの接続に合格。別Mac実測は資源待ち
+- **Bonjour:** WebUI/controller所有の発見・明示選択を実装し、単一Macの自己発見、UI Human Gate、GarageBand AUからself backendの実変換とoffline Bounceまで合格。別Mac実測は外部実機で再開するペインステータス凍結
 - **model/data:** `.pth`、`.index`、学習素材、生成audioはrepositoryへ同梱しない
 
 ## Windows・複数Macの検証資源を募集

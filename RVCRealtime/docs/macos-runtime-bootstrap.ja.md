@@ -1,10 +1,10 @@
 # Intel macOS向け外部RVC runtimeの構築
 
-状態: `[ISSUE #6 基盤]` `[CPU MODEL LOAD確認済み]` `[AU連携未実装]`
+状態: `[ISSUE #6/#24/#25/#27]` `[CPU MODEL LOAD確認済み]` `[AU RSVC連携・実変換確認済み]`
 
-この文書は、`RVCRealtime`が将来macOSから利用する外部RVC runtimeを、
-Intel Mac上で再現するための暫定手順である。WebUIの起動成功をAudio Unit連携や
-音声変換成功とは扱わない。
+この文書は、`RVCRealtime`のmacOS AUが利用するWebUI所有RVC runtimeを、Intel Mac上で
+再現する手順である。WebUI起動、RSVC handshake、実変換、DAW挿入、offline bounceは
+それぞれ別ゲートとして記録する。
 
 ## Issue #6との境界
 
@@ -20,17 +20,15 @@ Intel Mac上で再現するための暫定手順である。WebUIの起動成功
 PyTorch model loadが`exit 139`になった。既存RVC実行経路はPyTorchを先にimportしており、
 同じ順序ではHuBERT/RMVPE loadが成功した。検証scriptも本体と同じimport順を明示する。
 
-今回まだ確認していない範囲:
+現在確認済みの範囲:
 
-- Audio Unit bundleからの`worker/rvc_worker.py`起動
-- macOS向けprocess/IPC adapter
-- 外部`.pth` / `.index`を用いた短いvocal bufferの実変換
-- plug-in processへのaudio返却
-- Logic Pro / GarageBand / `auval`での実機確認
-- latency、dropout、audio thread非blockの測定
+- WebUIがRVC engine runnerを所有・監視し、AUは固定localhost gatewayへ接続する
+- 外部`.pth`を用いたRSVC実変換とGarageBandへのaudio返却
+- Bonjour自己serviceの発見・明示選択・session再接続
+- GarageBand標準offline bounceと利用者による変換音の聴感合格
+- runtime障害後の再生成、およびWebUI SIGTERM時の所有child回収
 
-したがって、これはIssue #6の受入条件を完了する変更ではなく、その前提となるruntime
-構築とmodel loadのreceiptである。
+Logic Pro、Apple Silicon、別Mac実LAN、Windows Bonjourは実機資源がなく未確認である。
 
 ## 確認環境
 

@@ -69,14 +69,24 @@ gateway越しRSVC handshakeまで成立した。独自UDP探索は実装して�
 
 ## Human Gate
 
-WebUIを`127.0.0.1:7865`で起動済み。利用者がブラウザで次を確認する。
+利用者がWebUI上のBonjour一覧・自己service・明示選択の動作を確認し、合格と
+報告した。
 
-1. 「Bonjour一覧を更新」を押す。
-2. `Bonjour: RVC WebUI saitoomiturunoMac-Pro 26c0b2`を選ぶ。
-3. 「このruntimeを選択」を押す。
-4. statusが`gateway=127.0.0.1:17865→127.0.0.1:17866`、
-   `Bonjour self`、`選択中`になることを確認する。
-5. 必要ならモデルを再適用し、GarageBandでoffline Bounceを再確認する。
+その後、GarageBand内のAU画面にBonjour選択機能がないとの報告を受けたが、
+これは欠落ではない。Bonjourの権限・browse・選択はWebUI/controllerだけが所有し、
+AUは固定localhost gatewayへ接続する設計である。実process/TCPを再確認した結果、
+次の接続が同時にESTABLISHEDだった。
+
+```text
+GarageBand PID 15810 :65015 -> WebUI PID 15353 127.0.0.1:17865
+WebUI PID 15353 :65016 -> runtime PID 15363 127.0.0.1:17866
+```
+
+WebUI statusも`Bonjour self`、`選択中`を保持していた。したがって単一Macの
+WebUI Human Gateと、AUから選択済みself routeへ通るtransport gateは合格とする。
+
+確認時のengine表示は`passthrough`だったため、この観測をBonjour選択後の変換音
+Human Gateには昇格しない。実モデル音声はWebUIでモデルを再適用してから別途確認する。
 
 ## UNKNOWN / 外部資源
 

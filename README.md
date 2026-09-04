@@ -24,7 +24,7 @@
 | runtime architecture | WebUIがPython/RVC processを所有し、AUは`127.0.0.1:17865`のRSVC thin headとして動作 |
 | 死活管理 | **live-host fault-injection test**: 操作中のGarageBandへ接続したruntimeだけを3回連続`SIGKILL`し、host生存、3/3のrunner再生成、AU自動再接続、推論復帰を確認 |
 | realtime再生 | Intel CPUでは130 ms blockに対し推論約1.18秒のためプチプチする。未合格 |
-| Bonjour / LAN | WebUI所有の広告・探索、local gateway、自己発見・明示選択、gateway越しRSVC handshakeまで単一Mac実測。UI Human Gate待ち |
+| Bonjour / LAN | WebUI所有の広告・探索、local gateway、自己発見・明示選択、GarageBand AU→gateway→self backend接続まで単一Mac実測・Human Gate合格 |
 
 Human listeningの合格と機械試験は混同していません。詳細receiptは次にあります。
 
@@ -61,7 +61,7 @@ GarageBandのsandbox内からPythonをspawnする旧案は廃止しました。r
 
 - **offline Bounce:** Intel Mac実機で実用合格。Soloとオケ付きMixを聴感確認済み
 - **realtime monitoring:** 現在のIntel CPUでは性能未達。[Issue #35](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/35)で最適化または高火力remote backendを追跡
-- **Bonjour:** [Issue #29](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/29)でWebUI/controller所有の発見・明示選択を実装。単一Mac機械ゲート合格、UI Human Gate待ち
+- **Bonjour:** WebUI/controller所有の発見・明示選択を実装し、単一Macの自己発見、UI Human Gate、GarageBand AUからself backendまでの接続に合格。別Mac実測は資源待ち
 - **model/data:** `.pth`、`.index`、学習素材、生成audioはrepositoryへ同梱しない
 
 ## Windows・複数Macの検証資源を募集

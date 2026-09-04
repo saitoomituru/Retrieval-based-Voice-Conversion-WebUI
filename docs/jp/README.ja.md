@@ -17,7 +17,7 @@
 - host標準offline通知下で約1183 msの推論を待ち、`0 drop`で完走
 - **live-host fault-injection test**: 操作中hostのruntimeだけを3回連続`SIGKILL`し、GarageBandを落とさず3/3でrunner再生成、AU自動再接続、推論復帰
 
-現在のIntel CPUではrealtime 130 ms blockに約1.18秒の推論を要するため、リアルタイム再生は未合格です。offline Bounceは人間の聴感で単独vocal・オケ付きmixとも合格しました。Bonjour/LANは単一Macでの自己広告・自己発見・選択を本forkの受入点とし、別Mac間およびWindows回帰は検証資源を募集しています。
+現在のIntel CPUではrealtime 130 ms blockに約1.18秒の推論を要するため、リアルタイム再生は未合格です。offline Bounceは人間の聴感で単独vocal・オケ付きmixとも合格しました。Bonjour/LANはWebUI所有の広告・探索、local gateway、自己発見・明示選択、gateway越しRSVC handshakeまで単一Macで機械確認済みです。UI Human Gate、別Mac間およびWindows回帰は検証資源を募集しています。
 
 - [開発ロードマップ Issue #1](https://github.com/saitoomituru/Retrieval-based-Voice-Conversion-WebUI/issues/1)
 - [GarageBand offline Bounceの実験票](../../experiments/20260904-1015__garageband-offline-bounce-in-progress.ja.md)

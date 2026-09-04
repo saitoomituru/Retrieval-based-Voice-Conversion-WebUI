@@ -13,6 +13,36 @@ import time
 import traceback
 from pathlib import Path
 
+from rvc_realtime_engine import RealtimeEngineConfig
+
+# Crash fix (macOS, observed launched from GarageBand): numpy and PyTorch each
+# bundle their own copy of Intel's OpenMP runtime (libiomp5.dylib); loading
+# both in one process aborts with SIGABRT in __kmp_abort_process ("OMP: Error
+# #15") unless this is set before they're imported below. Must be set this
+# early — RVCStreamEngine.__init__'s own os.environ.setdefault() calls run
+# too late relative to interpreter/library init on some launch paths.
+# Force-set, not setdefault(): a GarageBand-launched child inherits GarageBand's
+# own process environment, which may already define these keys (to values that
+# still crash). setdefault() would then silently keep the inherited value,
+# which is exactly what happened here — the setdefault() version of this fix
+# worked in a bare CLI shell (no inherited OMP_NUM_THREADS) but not when
+# launched from GarageBand. This is a concrete process-environment difference
+# between a bare CLI launch and a DAW-hosted runtime.
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# The Windows host (WorkerClient_win.cpp) signals new
+# requests/responses with named Events (WinEvent below). macOS has no
+# equivalent in the stdlib without an extra pip dependency (posix_ipc), so the
+# POSIX path polls the shared-memory sequence number instead of waiting on a
+# named semaphore/event. Both sides already tolerate short poll sleeps
+# elsewhere, and block sizes are >=20ms, so the added latency is negligible.
+# Shared memory itself is a plain file under $TMPDIR, mmap'd directly, instead
+# of mmap's Windows-only tagname mode or a POSIX shm_open() object (GarageBand
+# hosts AUv2 in-process and shm_open(..., O_CREAT, ...) has been observed
+# failing there with EPERM — sandboxing — while file I/O under $TMPDIR works).
+IS_POSIX = sys.platform != "win32"
+POLL_INTERVAL_S = 0.001
+
 MAGIC = 0x50564352
 PROTOCOL_VERSION = 1
 HEADER_BYTES = 4096
@@ -43,7 +73,7 @@ def read_value(shared: mmap.mmap, offset: int, fmt: str):
     return struct.unpack_from("<" + fmt, shared, offset)[0]
 
 
-def write_status(shared: mmap.mmap, state: int, message: str) -> None:
+def write_status(shared, state: int, message: str) -> None:
     write_value(shared, 8, "i", state)
     encoded = message.encode("utf-8", errors="replace")[: STATUS_TEXT_BYTES - 1]
     shared[STATUS_TEXT_OFFSET : STATUS_TEXT_OFFSET + STATUS_TEXT_BYTES] = b"\0" * STATUS_TEXT_BYTES
@@ -82,20 +112,74 @@ class WinEvent:
             self.handle = None
 
 
+class PosixSequenceWaiter:
+    """Polling stand-in for WinEvent on macOS/Linux: waits for the 4-byte field
+    at `offset` in shared memory to change from its last-seen value, instead of
+    a named OS event/semaphore. See the IS_POSIX comment near the top."""
+
+    def __init__(self, shared, offset: int):
+        self._shared = shared
+        self._offset = offset
+        self._last = read_value(shared, offset, "I")
+
+    def wait(self, timeout_ms: int) -> int:
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while time.monotonic() < deadline:
+            current = read_value(self._shared, self._offset, "I")
+            if current != self._last:
+                self._last = current
+                return WAIT_OBJECT_0
+            time.sleep(POLL_INTERVAL_S)
+        return WAIT_TIMEOUT
+
+    def set(self) -> None:
+        pass  # no-op: the reader polls the sequence value directly, nothing to signal
+
+    def close(self) -> None:
+        pass
+
+
 class RVCStreamEngine:
     def __init__(self, cfg: dict):
-        self.root = Path(cfg["rvc_root"]).resolve()
-        os.chdir(self.root)
-        sys.path.insert(0, str(self.root))
-        os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-        os.environ.setdefault("OMP_NUM_THREADS", "4")
+        engine_cfg = RealtimeEngineConfig.from_mapping(cfg)
+        cfg = engine_cfg.as_worker_mapping()
+        self.root = engine_cfg.rvc_root
+        self.assets_root = engine_cfg.assets_root
+        os.environ["hubert_root"] = str(self.assets_root / "hubert_base")
+        os.environ["rmvpe_root"] = str(self.assets_root / "rmvpe")
+        # Force-set: GarageBand's own process environment may already define
+        # these (see the KMP_DUPLICATE_LIB_OK comment near the top of this
+        # file for why setdefault() alone is not enough here).
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        # Crash fix (macOS, launched from GarageBand): the process.log for a
+        # crashing session showed 2 successful RVCStreamEngine.process() calls
+        # (prewarm + first real block) before __kmp_abort_process on the 3rd.
+        # infer_count 0-2 are always logged (see infer/rtrvc.py's report_status),
+        # and OpenMP's thread pool is lazily grown on repeat calls — consistent
+        # with pthread_create failing under GarageBand's sandbox once OpenMP
+        # tries to actually spin up >1 worker thread, which OpenMP treats as a
+        # fatal, unrecoverable error rather than degrading to fewer threads.
+        # Requesting only 1 thread up front avoids that thread creation.
+        os.environ["OMP_NUM_THREADS"] = "1"
+
+        import torch
+
+        # Configure PyTorch before importing torchaudio or creating any parallel
+        # work. set_num_interop_threads() can only be called once per process.
+        torch.set_num_threads(1)
+        if torch.get_num_interop_threads() != 1:
+            torch.set_num_interop_threads(1)
 
         import librosa
         import numpy as np
-        import torch
         import torch.nn.functional as F
         import torchaudio.transforms as tat
 
+        # Belt-and-suspenders alongside the OMP_NUM_THREADS/OPENBLAS_NUM_THREADS
+        # env vars above: torch's own thread pool is a direct API call, not
+        # dependent on whether libiomp5 actually reads those env vars in this
+        # process's launch context (observed to differ between a bare CLI shell
+        # and a GarageBand-launched child, see the comments above).
         from configs.config import Config
         from infer import rtrvc
         from tools.cuda_graph import run_cuda_graph
@@ -122,7 +206,9 @@ class RVCStreamEngine:
         self.sola_search_frame = self.zc
         self.extra_frame = int(round(self.extra_ms / 1000 * self.sample_rate / self.zc) * self.zc)
 
-        self.config = Config()
+        # The engine is also hosted by rvc_runtime_service.py. Its CLI flags are
+        # not WebUI flags, so do not let Config parse process-global sys.argv.
+        self.config = Config(argv=[])
         self.rvc = rtrvc.RVC(
             0.0,
             0.0,
@@ -159,6 +245,11 @@ class RVCStreamEngine:
         self.process(probe.cpu().numpy(), 12.0, 0.0, 0.0, 0.5, -60.0, 0)
         if self.torch.device(self.config.device).type == "cuda":
             self.torch.cuda.synchronize(self.config.device)
+
+        self.reset_stream_state()
+
+    def reset_stream_state(self) -> None:
+        """Discard temporal context after an explicit stream discontinuity."""
 
         self.input_wav.zero_()
         self.input_wav_res.zero_()
@@ -255,15 +346,33 @@ class RVCStreamEngine:
 
 def run(args: argparse.Namespace) -> int:
     shared = None
+    map_fd = None
+    input_view = None
+    output_view = None
     request_event = None
     response_event = None
     try:
-        shared = mmap.mmap(-1, MAP_BYTES, tagname=args.map, access=mmap.ACCESS_WRITE)
-        request_event = WinEvent(args.request)
-        response_event = WinEvent(args.response)
+        if IS_POSIX:
+            # `args.map` may be a plain file path under $TMPDIR, rather than a
+            # POSIX shm_open() name: GarageBand
+            # hosts AUv2 in-process and shm_open(..., O_CREAT, ...) has been
+            # observed failing there with EPERM (sandboxing), while ordinary
+            # file I/O under $TMPDIR is unaffected.
+            map_fd = os.open(args.map, os.O_RDWR)
+            shared = mmap.mmap(map_fd, MAP_BYTES)
+            request_event = PosixSequenceWaiter(shared, 12)  # host writes the request sequence here
+            response_event = PosixSequenceWaiter(shared, 16)  # unused: worker never waits on this
+        else:
+            shared = mmap.mmap(-1, MAP_BYTES, tagname=args.map, access=mmap.ACCESS_WRITE)
+            request_event = WinEvent(args.request)
+            response_event = WinEvent(args.response)
         if read_value(shared, 0, "I") != MAGIC or read_value(shared, 4, "I") != PROTOCOL_VERSION:
             raise RuntimeError("RVC VST protocol mismatch")
-        write_status(shared, STATUS_LOADING, "Loading Python and CUDA")
+        # Generic on purpose: this fires before configs/config.py picks a real
+        # device, and on macOS there is no CUDA — an unconditional "...CUDA"
+        # label here was misread as the worker trying (and retrying) to reach
+        # CUDA, when it never does on this platform.
+        write_status(shared, STATUS_LOADING, "Loading Python runtime")
         with open(args.config, "r", encoding="utf-8") as handle:
             cfg = json.load(handle)
         # RVC's Config parses process-wide CLI flags intended for its WebUI.
@@ -328,15 +437,26 @@ def run(args: argparse.Namespace) -> int:
             request_event.close()
         if response_event is not None:
             response_event.close()
+        # numpy/struct views must release their buffer export before
+        # mmap.close(), or it raises BufferError.
+        input_view = None
+        output_view = None
         if shared is not None:
-            shared.close()
+            try:
+                shared.close()  # detach only; the host (creator) unlink()s the file
+            except BufferError:
+                pass
+        if map_fd is not None:
+            os.close(map_fd)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--map", required=True)
-    parser.add_argument("--request", required=True)
-    parser.add_argument("--response", required=True)
+    # --request/--response name Windows named Events; unused on POSIX, which
+    # polls shared memory instead (see IS_POSIX / PosixSequenceWaiter above).
+    parser.add_argument("--request", required=not IS_POSIX)
+    parser.add_argument("--response", required=not IS_POSIX)
     parser.add_argument("--config", required=True)
     return parser.parse_args()
 

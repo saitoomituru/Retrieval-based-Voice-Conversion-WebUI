@@ -34,7 +34,7 @@ if (-not (Test-Path $Validator)) {
     $Sdk = Join-Path $Root "third_party\iPlug2\Dependencies\IPlug\VST3_SDK"
     # Several validator source names exceed legacy MSBuild path limits when the
     # repository is cloned deeply. A stable TEMP junction keeps compiler paths short.
-    $ValidatorSdk = Join-Path ([System.IO.Path]::GetTempPath()) "RVCRealtimeVST-vst3sdk-58f8da7"
+    $ValidatorSdk = Join-Path ([System.IO.Path]::GetTempPath()) "RVCRealtime-vst3sdk-58f8da7"
     if (-not (Test-Path -LiteralPath $ValidatorSdk)) {
         New-Item -ItemType Junction -Path $ValidatorSdk -Target $Sdk | Out-Null
     }

@@ -2,9 +2,9 @@
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-RVC Realtime VST 是面向 Windows x64 的实时变声插件工程，可从同一套源码构建 VST2 和 VST3。
+RVC Realtime 是跨平台变声插件实验工程。同一套源码保留 Windows x64 VST2/VST3，并加入 Intel macOS APP/AUv2。
 
-插件本体使用 C++17 和 iPlug2。模型加载与 RVC 推理由独立的 Python worker 进程执行，宿主音频线程只负责音频缓冲、混音和无锁队列操作。
+插件本体使用 C++17 和 iPlug2，宿主音频线程只负责音频缓冲、混音和无锁队列操作。Windows保留独立Python worker；macOS AU作为薄audio head连接由WebUI拥有的runtime，不在GarageBand进程内加载Python、PyTorch或模型。
 
 本目录不包含 Python runtime、RVC 模型、索引、训练数据或完整 RVC 整合包。编译插件不需要这些运行时文件。
 
@@ -13,24 +13,29 @@ RVC Realtime VST 是面向 Windows x64 的实时变声插件工程，可从同�
 - Windows 10/11 x64
 - 64 位 VST2 DLL
 - 64 位 VST3 bundle
+- Intel macOS APP与AUv2 component
+- GarageBand标准offline bounce实模型变换
 - Mono 输入输出、Mono 到 Stereo、Stereo 输入输出
 - RMVPE、FCPE、PM 三种 F0 方法
 - 外部 64 位 RVC Python runtime
 - `.pth` 模型和可选 `.index` 文件
 - Studio One 等 64 位 VST 宿主
 
-当前工程未配置 Windows x86、macOS 或 Linux 插件目标。
+当前工程未配置 Windows x86 或 Linux 插件目标。Apple Silicon、Logic Pro、本fork大规模集成后的Windows实机构建、跨Mac Bonjour传输因缺少测试资源而保持UNKNOWN。
 
 ## 工作原理
 
 ```mermaid
 flowchart LR
-    DAW["64 位 DAW"] --> Plugin["VST2/VST3 C++ 插件"]
+    DAW["DAW宿主"] --> Plugin["iPlug2 C++插件"]
     Plugin --> InputRing["输入无锁环形缓冲"]
     InputRing --> Bridge["WorkerClient 管理线程"]
-    Bridge <--> IPC["共享内存 + Windows Event"]
+    Bridge --> IPC["Windows: 共享内存 + Event"]
     IPC <--> Worker["独立 Python worker"]
+    Bridge --> RSVC["macOS: localhost RSVC"]
+    RSVC <--> WebUI["WebUI拥有的runtime / Bonjour gateway"]
     Worker --> RVC["外部 RVC 源码、模型与 CUDA 环境"]
+    WebUI --> RVC
     Worker --> IPC
     Bridge --> OutputRing["输出无锁环形缓冲"]
     OutputRing --> Plugin
@@ -38,6 +43,8 @@ flowchart LR
 ```
 
 插件通过 `CreateProcessW` 启动整合包中的 `runtime\python.exe`，并执行插件自带的 `worker\rvc_worker.py`。音频数据通过 Windows 共享内存传递，请求和响应通过命名 Event 同步，不使用网络端口、HTTP 或普通 stdin/stdout 管道传输音频。
+
+macOS使用`WorkerClient_stream_mac.cpp`连接固定localhost RSVC gateway。WebUI拥有RVC engine runner、model/index选择、Bonjour发现、health与bounded restart。AU界面只通过localhost control API请求runtime列表；audio thread不进行Bonjour扫描、Python调用或blocking network。当前需要手动先启动WebUI，LaunchServices启动另行追踪。
 
 Python worker 从用户选择的 RVC 根目录导入：
 
@@ -50,7 +57,7 @@ tools/cuda_graph.py
 ## 源码结构
 
 ```text
-RVCRealtimeVST/
+RVCRealtime/
 ├─ CMakeLists.txt
 ├─ config.h
 ├─ src/                         插件、界面、状态和 IPC 源码
@@ -106,7 +113,7 @@ iPlug2 的首次 CMake 配置会获取 WIL 和 WebView2 SDK，因此首次构建
 ```powershell
 git config --global core.longpaths true
 git clone --recursive https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git
-cd Retrieval-based-Voice-Conversion-WebUI\RVCRealtimeVST
+cd Retrieval-based-Voice-Conversion-WebUI\RVCRealtime
 ```
 
 已有普通 clone 时执行：
@@ -129,7 +136,7 @@ VST3 SDK 所需的 `base`、`cmake`、`pluginterfaces` 和 `public.sdk` 由 VST3
 
 ## 编译 VST2 和 VST3
 
-在 `RVCRealtimeVST` 目录执行：
+在 `RVCRealtime` 目录执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
@@ -249,7 +256,7 @@ RVCRealtime.vst3/Contents/Resources/worker/rvc_worker.py
 - 实际 SOLA overlap：`min(Crossfade, 40 ms)`
 - 插件报告延迟：两倍 Block 对应的采样帧数
 
-Block、Crossfade、Context、采样率或运行路径变化会重建 Python worker。Pitch、Formant、Index、RMS Mix、Gate 和 F0 方法会在运行期间通过共享内存传递。
+Block、Crossfade、Context或采样率变化会重建处理session。Pitch、Formant、Index、RMS Mix、Gate和F0属于hot parameter：Windows通过共享内存传递，macOS由管理线程发送有版本的RSVC `CONFIG_UPDATE`。macOS的model/index路径由WebUI runtime拥有。
 
 ## 常见问题
 

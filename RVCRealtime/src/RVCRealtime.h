@@ -36,6 +36,14 @@ enum EControlTags {
   kCtrlPythonPath,
   kCtrlModelName,
   kCtrlIndexName
+#if defined(__APPLE__)
+  ,
+  kCtrlRenderMode,
+  kCtrlModelMenu,
+  kCtrlIndexMenu,
+  kCtrlRuntimeMenu,
+  kCtrlRuntimeModelMenu
+#endif
 };
 
 using namespace iplug;
@@ -69,6 +77,12 @@ private:
   void SetModelPath(const char* path);
   void SetIndexPath(const char* path);
   void UpdateFileLabels();
+#if defined(__APPLE__)
+  void RefreshRuntimeModelLabels();
+#endif
+#if defined(__APPLE__)
+  void RescanFileMenus();
+#endif
   void StopEngineForPathChange();
   bool ValidateConfiguration(std::string& error) const;
   void LoadUserConfiguration();
@@ -81,6 +95,9 @@ private:
   int mDryWritePosition = 0;
   std::atomic<int> mTargetDelayFrames {12480};
   float mActiveBlend = 0.0f;
+#if defined(__APPLE__)
+  std::atomic<bool> mRuntimeLabelRefreshPending {true};
+#endif
 
   mutable std::mutex mStateMutex;
   WDL_String mModelPath {RVC_DEFAULT_MODEL};

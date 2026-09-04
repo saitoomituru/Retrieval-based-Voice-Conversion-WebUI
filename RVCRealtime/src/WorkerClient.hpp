@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -29,6 +30,13 @@ public:
 
     std::size_t pushInput(const float* samples, std::size_t count) noexcept;
     std::size_t popOutput(float* samples, std::size_t count) noexcept;
+#if defined(__APPLE__)
+    void setRenderingOffline(bool offline) noexcept;
+    uint32_t offlineRenderCount() const noexcept { return offlineRenderCount_.load(std::memory_order_relaxed); }
+    bool processOffline(const float* input, std::size_t inputCount,
+                        float* output, std::size_t outputCount,
+                        uint32_t timeoutMs = 30000) noexcept;
+#endif
 
     bool isReady() const noexcept { return ready_.load(std::memory_order_acquire); }
     int status() const noexcept { return status_.load(std::memory_order_acquire); }
@@ -50,10 +58,14 @@ private:
 
     void threadMain();
     bool launchWorker(const Paths& paths, uint64_t version);
+    bool applyParameters(uint64_t version);
     void stopWorker();
     bool processOneBlock();
     Paths pathsSnapshot() const;
     void setStatus(int status, const std::string& text);
+#if defined(__APPLE__)
+    void waitForAudioRingUsers() noexcept;
+#endif
     uint32_t calculateBlockFrames() const noexcept;
     std::string writeWorkerConfig(const Paths& paths, std::string& error) const;
 
@@ -65,6 +77,18 @@ private:
     std::atomic<bool> enabled_ {false};
     std::atomic<bool> stopRequested_ {false};
     std::atomic<bool> ready_ {false};
+#if defined(__APPLE__)
+    std::atomic<uint32_t> audioRingUsers_ {0};
+#endif
+#if defined(__APPLE__)
+    std::atomic<bool> renderingOffline_ {false};
+    std::atomic<uint32_t> offlineRenderCount_ {0};
+    std::atomic<bool> discontinuous_ {false};
+    std::atomic<uint64_t> renderModeVersion_ {0};
+    std::atomic<uint64_t> appliedRenderModeVersion_ {0};
+    std::condition_variable offlineCv_;
+    std::mutex offlineMutex_;
+#endif
     std::atomic<int> status_ {kStatusOff};
     std::atomic<float> inferMs_ {0.0f};
     std::atomic<uint32_t> droppedBlocks_ {0};
@@ -72,6 +96,7 @@ private:
     std::atomic<uint32_t> latencyFrames_ {12480};
     std::atomic<double> sampleRate_ {48000.0};
     std::atomic<uint64_t> configVersion_ {1};
+    std::atomic<uint64_t> parameterVersion_ {1};
 
     mutable std::mutex pathsMutex_;
     Paths paths_;

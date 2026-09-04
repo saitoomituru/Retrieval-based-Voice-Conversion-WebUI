@@ -133,10 +133,25 @@ class Runtime:
             self.session_counter += 1
             return self.session_counter
 
-    def create_engine(self, sample_rate: int, block_frames: int, crossfade: int, extra: int):
+    def models(self) -> list[dict[str, str]]:
+        describe_models = getattr(self.engine_factory, "models", None)
+        if describe_models is not None:
+            return describe_models()
+        return [{"id": "active", "name": "active", "index": ""}]
+
+    def create_engine(
+        self,
+        sample_rate: int,
+        block_frames: int,
+        crossfade: int,
+        extra: int,
+        model_id: str = "active",
+    ):
         create_for_session = getattr(self.engine_factory, "create_for_session", None)
         if create_for_session is not None:
-            return create_for_session(sample_rate, block_frames, crossfade, extra)
+            return create_for_session(
+                sample_rate, block_frames, crossfade, extra, model_id=model_id
+            )
         return self.engine_factory()
 
 
@@ -160,12 +175,62 @@ class RvcEngineFactory:
             self._base_config = json.load(handle)
         self._build_lock = threading.Lock()
 
+        catalog = self._base_config.get("models")
+        if not isinstance(catalog, list) or not catalog:
+            catalog = [{
+                "id": "legacy-active",
+                "name": str(self._base_config.get("model_path", "active")),
+                "model_path": self._base_config.get("model_path", ""),
+                "index_path": self._base_config.get("index_path", ""),
+            }]
+        self._models = {
+            str(entry["id"]): copy.deepcopy(entry)
+            for entry in catalog
+            if isinstance(entry, dict) and entry.get("id") and entry.get("model_path")
+        }
+        self._default_model_id = str(
+            self._base_config.get("default_model_id") or next(iter(self._models), "")
+        )
+        if self._default_model_id not in self._models:
+            raise ValueError("runtime default model is not present in model catalog")
+
+    def models(self) -> list[dict[str, str]]:
+        default = self._models[self._default_model_id]
+        result = [{
+            "id": "active",
+            "name": f"WebUI default: {default.get('name', self._default_model_id)}",
+            "index": str(default.get("index_path", "")).rsplit("/", 1)[-1],
+        }]
+        result.extend(
+            {
+                "id": model_id,
+                "name": str(entry.get("name", model_id)),
+                "index": str(entry.get("index_path", "")).rsplit("/", 1)[-1],
+            }
+            for model_id, entry in self._models.items()
+        )
+        return result
+
     def create_for_session(
-        self, sample_rate: int, block_frames: int, crossfade: int, extra: int
+        self,
+        sample_rate: int,
+        block_frames: int,
+        crossfade: int,
+        extra: int,
+        *,
+        model_id: str = "active",
     ):
         from RVCRealtime.worker.rvc_worker import RVCStreamEngine
 
+        resolved_model_id = self._default_model_id if model_id == "active" else model_id
+        if resolved_model_id not in self._models:
+            raise ValueError(f"unknown runtime model id: {model_id}")
+        model = self._models[resolved_model_id]
         config = copy.deepcopy(self._base_config)
+        config.pop("models", None)
+        config.pop("default_model_id", None)
+        config["model_path"] = model["model_path"]
+        config["index_path"] = model.get("index_path", "")
         config["sample_rate"] = sample_rate
         config["block_ms"] = 1000.0 * block_frames / sample_rate
         config["crossfade_ms"] = 1000.0 * crossfade / sample_rate
@@ -179,19 +244,19 @@ class RvcEngineFactory:
             return engine
 
 
-def _hello_ack() -> bytes:
+def _hello_ack(runtime: Runtime) -> bytes:
     name = b"RVC WebUI runtime"
     caps = json.dumps({"protocol_version": 1, "backends": ["cpu"], "sample_rates": [44100, 48000],
                        "max_sessions": 4, "max_in_flight": MAX_IN_FLIGHT,
                        "audio_flags": {"offline": AUDIO_FLAG_OFFLINE},
-                       "models": [{"id": "active", "name": "active"}]},
+                       "models": runtime.models()},
                       separators=(",", ":")).encode()
     payload = struct.pack("<HHIIIIIH", 1, 0, 0, 1 << 20, 131072, 1000, 4, len(name)) + name
     payload += struct.pack("<H", len(caps)) + caps
     return pack_frame(Frame(FrameType.HELLO_ACK, payload))
 
 
-def _parse_session_open(payload: bytes) -> tuple[int, int, int, int, int, int]:
+def _parse_session_open(payload: bytes) -> tuple[int, int, int, int, int, int, str]:
     if len(payload) < 30:
         raise ValueError("short SESSION_OPEN")
     request_id, sample_rate, channels, sample_format, block_frames, crossfade, extra, _flags = struct.unpack_from(
@@ -204,7 +269,7 @@ def _parse_session_open(payload: bytes) -> tuple[int, int, int, int, int, int]:
         raise ValueError("invalid SESSION_OPEN strings")
     if sample_rate not in (44100, 48000) or channels != 1 or sample_format != 1 or block_frames <= 0:
         raise ValueError("unsupported SESSION_OPEN")
-    return request_id, sample_rate, channels, block_frames, crossfade, extra
+    return request_id, sample_rate, channels, block_frames, crossfade, extra, model_id
 
 
 def _validate_engine_configuration(engine, sample_rate: int, block_frames: int) -> None:
@@ -250,12 +315,12 @@ def serve_client(sock: socket.socket, runtime: Runtime) -> None:
     hello = recv_frame(sock)
     if hello.frame_type is not FrameType.HELLO or hello.session_id or hello.sequence:
         raise ValueError("HELLO required")
-    sock.sendall(_hello_ack())
+    sock.sendall(_hello_ack(runtime))
     opened = recv_frame(sock)
     if opened.frame_type is not FrameType.SESSION_OPEN:
         raise ValueError("SESSION_OPEN required")
-    request_id, sample_rate, channels, block_frames, crossfade, extra = _parse_session_open(opened.payload)
-    engine = runtime.create_engine(sample_rate, block_frames, crossfade, extra)
+    request_id, sample_rate, channels, block_frames, crossfade, extra, model_id = _parse_session_open(opened.payload)
+    engine = runtime.create_engine(sample_rate, block_frames, crossfade, extra, model_id)
     _validate_engine_configuration(engine, sample_rate, block_frames)
     session_id = runtime.next_session_id()
     send_lock = threading.Lock()

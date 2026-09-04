@@ -22,13 +22,13 @@ def text(value: str) -> bytes:
     return struct.pack("<H", len(raw)) + raw
 
 
-def open_session(client: socket.socket, *, block_frames: int = 8) -> int:
+def open_session(client: socket.socket, *, block_frames: int = 8, model_id: str = "active") -> int:
     hello = struct.pack("<HHIBBH", 1, 1, 0, 1, 0, 4) + b"test" + text("v1")
     client.sendall(pack_frame(Frame(FrameType.HELLO, hello)))
     if recv_frame(client).frame_type is not FrameType.HELLO_ACK:
         raise AssertionError("HELLO_ACK not received")
     session = struct.pack("<IIHHIIII", 1, 48000, 1, 1, block_frames, 0, 0, 0)
-    session += text("active") + text("") + text("")
+    session += text(model_id) + text("") + text("")
     client.sendall(pack_frame(Frame(FrameType.SESSION_OPEN, session)))
     accepted = recv_frame(client)
     if accepted.frame_type is not FrameType.SESSION_ACCEPT:
@@ -41,13 +41,33 @@ class RuntimeServiceTest(unittest.TestCase):
         calls = []
 
         class SessionFactory:
-            def create_for_session(self, sample_rate, block_frames, crossfade, extra):
-                calls.append((sample_rate, block_frames, crossfade, extra))
+            def create_for_session(self, sample_rate, block_frames, crossfade, extra, *, model_id):
+                calls.append((sample_rate, block_frames, crossfade, extra, model_id))
                 return object()
 
         engine = Runtime(SessionFactory()).create_engine(48000, 6240, 3840, 96000)
         self.assertIs(type(engine), object)
-        self.assertEqual(calls, [(48000, 6240, 3840, 96000)])
+        self.assertEqual(calls, [(48000, 6240, 3840, 96000, "active")])
+
+    def test_explicit_model_id_is_scoped_to_session_factory(self):
+        calls = []
+
+        class SessionFactory:
+            def create_for_session(self, *audio_shape, model_id):
+                calls.append((audio_shape, model_id))
+                return object()
+
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        worker = threading.Thread(
+            target=serve_client, args=(server, Runtime(SessionFactory())), daemon=True
+        )
+        worker.start()
+        session_id = open_session(client, model_id="rvc-test-model")
+        self.assertEqual(calls, [((48000, 8, 0, 0), "rvc-test-model")])
+        client.sendall(pack_frame(Frame(FrameType.CLOSE, session_id=session_id)))
+        worker.join(1)
 
     def test_handshake_heartbeat_and_audio(self):
         client, server = socket.socketpair()

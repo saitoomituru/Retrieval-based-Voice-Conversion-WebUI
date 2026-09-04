@@ -2,6 +2,7 @@ import os
 import shutil
 import html
 import copy
+import hashlib
 import re
 import sys
 import warnings
@@ -328,6 +329,22 @@ def configure_rvc_runtime(model_name, file_index):
     if index_path and not Path(index_path).is_file():
         return f"ERROR | indexが見つかりません: {index_path}"
 
+    selected_index_path = str(Path(index_path).resolve()) if index_path else ""
+    models = []
+    for candidate_name in weight_names():
+        candidate_path = (Path(weight_root) / candidate_name).resolve()
+        candidate_index = normalize_index_path(get_index_path_from_model(candidate_name))
+        if candidate_name == model_name:
+            candidate_index = selected_index_path
+        models.append(
+            {
+                "id": "rvc-" + hashlib.sha256(candidate_name.encode("utf-8")).hexdigest()[:16],
+                "name": candidate_name,
+                "model_path": str(candidate_path),
+                "index_path": candidate_index,
+            }
+        )
+    selected_entry = next(entry for entry in models if entry["name"] == model_name)
     runtime_config = {
         "rvc_root": str(Path(now_dir).resolve()),
         "assets_root": str(
@@ -336,7 +353,9 @@ def configure_rvc_runtime(model_name, file_index):
             ).resolve()
         ),
         "model_path": str(model_path),
-        "index_path": str(Path(index_path).resolve()) if index_path else "",
+        "index_path": selected_index_path,
+        "default_model_id": selected_entry["id"],
+        "models": models,
     }
     config_path = _runtime_engine_config
     config_path.parent.mkdir(parents=True, exist_ok=True)

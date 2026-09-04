@@ -26,6 +26,18 @@
 | realtime再生 | Intel CPUでは130 ms blockに対し推論約1.18秒のためプチプチする。未合格 |
 | Bonjour / LAN | WebUI所有の広告・探索、local gateway、自己発見・明示選択、GarageBand AU→gateway→self backend接続まで単一Mac実測・Human Gate合格 |
 
+## デモソング
+
+**文部省唱歌「村祭」 RVCデモ**
+
+- 1番: ずんだもん
+- 2番: デルタもん
+- 3番: 元の生歌唱 ふさもふ
+
+[![文部省唱歌「村祭」 RVCデモ - ずんだもん / デルタもん / 生ふさもふ](https://img.youtube.com/vi/Y91K-4o8xz0/hqdefault.jpg)](https://youtube.com/shorts/Y91K-4o8xz0?si=g-VA_kcmIiyq3ZEP)
+
+▶ [YouTube Shortsでデモを再生](https://youtube.com/shorts/Y91K-4o8xz0?si=g-VA_kcmIiyq3ZEP)
+
 Human listeningの合格と機械試験は混同していません。詳細receiptは次にあります。
 
 - [GarageBand offline Bounceとオケ付きMixのHuman Gate](experiments/20260904-1015__garageband-offline-bounce-in-progress.ja.md)

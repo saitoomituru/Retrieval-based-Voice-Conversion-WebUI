@@ -269,6 +269,7 @@ def run_service(
     control_port: int,
     stream_port: int,
     *,
+    stream_host: str = LOOPBACK,
     enable_control: bool = True,
 ) -> None:
     http = None
@@ -277,7 +278,7 @@ def run_service(
         http = ThreadingHTTPServer((LOOPBACK, control_port), _HealthHandler)
         threading.Thread(target=http.serve_forever, daemon=True).start()
     try:
-        with socket.create_server((LOOPBACK, stream_port), reuse_port=False) as listener:
+        with socket.create_server((stream_host, stream_port), reuse_port=False) as listener:
             while True:
                 client, _address = listener.accept()
                 threading.Thread(target=_serve_and_close, args=(client, runtime), daemon=True).start()
@@ -299,6 +300,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT)
     parser.add_argument("--stream-port", type=int, default=DEFAULT_STREAM_PORT)
+    parser.add_argument(
+        "--stream-host",
+        default=LOOPBACK,
+        help="RSVC audio streamのbind先。Bonjour共有時だけ0.0.0.0を明示する",
+    )
     parser.add_argument("--engine-config", help="既存 worker 互換の RVC engine JSON")
     parser.add_argument(
         "--no-control",
@@ -314,6 +320,7 @@ def main() -> int:
         Runtime(engine_factory),
         args.control_port,
         args.stream_port,
+        stream_host=args.stream_host,
         enable_control=not args.no_control,
     )
     return 0

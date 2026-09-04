@@ -86,6 +86,7 @@ class RvcRuntimeSupervisor:
         *,
         python_executable: str = sys.executable,
         stream_port: int = DEFAULT_STREAM_PORT,
+        stream_bind_host: str = DEFAULT_STREAM_HOST,
         engine_config: Optional[Path] = None,
         probe: Callable[..., ProbeResult] = probe_rsvc_stream,
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
@@ -96,6 +97,7 @@ class RvcRuntimeSupervisor:
         self.root = Path(root).resolve()
         self.python_executable = python_executable
         self.stream_port = stream_port
+        self.stream_bind_host = stream_bind_host
         self.engine_config = Path(engine_config).resolve() if engine_config else None
         self._probe = probe
         self._popen = popen
@@ -166,6 +168,8 @@ class RvcRuntimeSupervisor:
             "--no-control",
             "--stream-port",
             str(self.stream_port),
+            "--stream-host",
+            self.stream_bind_host,
         ]
         if self.engine_config:
             command.extend(["--engine-config", str(self.engine_config)])

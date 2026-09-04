@@ -2,8 +2,11 @@ import os
 import shutil
 import html
 import copy
+import hashlib
 import re
+import sys
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings(
     "ignore",
@@ -24,6 +27,16 @@ os.environ.setdefault("weight_pymss_root", "assets/pymss_weights")
 os.environ.setdefault("index_root", "logs")
 os.environ.setdefault("outside_index_root", "assets/indices")
 os.environ.setdefault("rmvpe_root", "assets/rmvpe")
+
+default_input_audio = os.environ.get("RVC_DEFAULT_INPUT_AUDIO", "").strip()
+if default_input_audio and not os.path.isfile(default_input_audio):
+    warnings.warn(
+        f"RVC_DEFAULT_INPUT_AUDIO does not exist: {default_input_audio}",
+        RuntimeWarning,
+    )
+    default_input_audio = None
+elif not default_input_audio:
+    default_input_audio = None
 
 now_dir = os.getcwd()
 tmp = os.path.join(now_dir, "TEMP")
@@ -81,11 +94,39 @@ import socket
 import subprocess
 import time
 
+from rvc_runtime_bonjour import BonjourRuntimeDirectory, LOCAL_CHOICE
+from rvc_runtime_control import RuntimeRouterControl
+from rvc_runtime_gateway import DEFAULT_BACKEND_PORT, RsvcGateway
+from rvc_runtime_lifecycle import sigterm_as_keyboard_interrupt
+from rvc_runtime_supervisor import RvcRuntimeSupervisor
+
 
 logging.getLogger("numba").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+_runtime_bind_host = "0.0.0.0" if platform.system() == "Darwin" else "127.0.0.1"
+# TEMP is deliberately cleared on every WebUI launch.  Keep the last explicit
+# AU model choice in the ignored runtime log area so restart does not silently
+# fall back to the passthrough engine.
+_runtime_engine_config = Path(now_dir) / "logs" / "rvc-runtime-engine.json"
+rvc_runtime_supervisor = RvcRuntimeSupervisor(
+    Path(now_dir),
+    python_executable=sys.executable,
+    stream_port=DEFAULT_BACKEND_PORT,
+    stream_bind_host=_runtime_bind_host,
+    # The file is written only by the explicit "選択音色をAUへ適用" action.
+    # Reusing it preserves that human choice across a WebUI restart; it does
+    # not silently select an arbitrary model from assets/weights.
+    engine_config=_runtime_engine_config if _runtime_engine_config.is_file() else None,
+)
+rvc_runtime_bonjour = BonjourRuntimeDirectory(Path(now_dir), DEFAULT_BACKEND_PORT)
+rvc_runtime_gateway = RsvcGateway(rvc_runtime_bonjour.local_target())
+rvc_runtime_control = RuntimeRouterControl(
+    rvc_runtime_bonjour,
+    rvc_runtime_gateway,
+    engine_config_path=_runtime_engine_config,
+)
 
 
 def find_available_port(start_port, host="0.0.0.0"):
@@ -113,10 +154,11 @@ def is_gradio_port_in_use_error(error, port):
 
 def launch_webui_with_port_fallback(app, config):
     """Launch Gradio, increasing the requested port until startup succeeds."""
+    server_host = os.environ.get("RVC_SERVER_HOST", "0.0.0.0")
     next_port = config.listen_port
     queued_app = app.queue(concurrency_count=511, max_size=1022)
     while True:
-        config.listen_port = find_available_port(next_port)
+        config.listen_port = find_available_port(next_port, server_host)
         if config.listen_port != next_port:
             logger.warning(
                 "Port %s is occupied; trying port %s instead.",
@@ -125,7 +167,7 @@ def launch_webui_with_port_fallback(app, config):
             )
         try:
             queued_app.launch(
-                server_name="0.0.0.0",
+                server_name=server_host,
                 inbrowser=not config.noautoopen,
                 server_port=config.listen_port,
                 quiet=True,
@@ -244,6 +286,87 @@ def normalize_index_path(file_index):
         .strip(" ")
         .replace("trained", "added")
     )
+
+
+def rvc_runtime_status():
+    target = rvc_runtime_gateway.target()
+    selection = target.label
+    available = target.local or any(
+        service.identity == target.identity for service in rvc_runtime_bonjour.services()
+    )
+    route_state = "選択中" if available else "消失・自動failoverなし"
+    return (
+        f"{rvc_runtime_supervisor.status_text()} | "
+        f"gateway=127.0.0.1:17865→{target.host}:{target.port} "
+        f"({selection}, {route_state}) | {rvc_runtime_bonjour.status_text()}"
+    )
+
+
+def refresh_rvc_runtime_choices():
+    selected = rvc_runtime_control.selected_choice()
+    choices = rvc_runtime_control.choices()
+    value = selected if selected in choices else LOCAL_CHOICE
+    return {"choices": choices, "value": value, "__type__": "update"}, rvc_runtime_status()
+
+
+def select_rvc_runtime(choice):
+    choice = str(choice or LOCAL_CHOICE)
+    try:
+        rvc_runtime_control.select(choice)
+    except (OSError, RuntimeError, ValueError) as error:
+        return f"ERROR | runtime選択失敗: {error} | {rvc_runtime_status()}"
+    return rvc_runtime_status()
+
+
+def configure_rvc_runtime(model_name, file_index):
+    model_name = str(model_name or "").strip()
+    if not model_name:
+        return "ERROR | AUへ適用する推理音色を選択してください"
+    model_path = (Path(weight_root) / model_name).resolve()
+    if not model_path.is_file():
+        return f"ERROR | modelが見つかりません: {model_path}"
+    index_path = normalize_index_path(file_index)
+    if index_path and not Path(index_path).is_file():
+        return f"ERROR | indexが見つかりません: {index_path}"
+
+    selected_index_path = str(Path(index_path).resolve()) if index_path else ""
+    models = []
+    for candidate_name in weight_names():
+        candidate_path = (Path(weight_root) / candidate_name).resolve()
+        candidate_index = normalize_index_path(get_index_path_from_model(candidate_name))
+        if candidate_name == model_name:
+            candidate_index = selected_index_path
+        models.append(
+            {
+                "id": "rvc-" + hashlib.sha256(candidate_name.encode("utf-8")).hexdigest()[:16],
+                "name": candidate_name,
+                "model_path": str(candidate_path),
+                "index_path": candidate_index,
+            }
+        )
+    selected_entry = next(entry for entry in models if entry["name"] == model_name)
+    runtime_config = {
+        "rvc_root": str(Path(now_dir).resolve()),
+        "assets_root": str(
+            Path(
+                os.environ.get("RVC_RUNTIME_ASSETS_ROOT", Path(now_dir) / "assets")
+            ).resolve()
+        ),
+        "model_path": str(model_path),
+        "index_path": selected_index_path,
+        "default_model_id": selected_entry["id"],
+        "models": models,
+    }
+    config_path = _runtime_engine_config
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    pending_path = config_path.with_suffix(".json.tmp")
+    pending_path.write_text(
+        json.dumps(runtime_config, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    pending_path.replace(config_path)
+    rvc_runtime_supervisor.configure_engine(config_path)
+    return rvc_runtime_status()
 
 
 def report_missing_index(file_index):
@@ -864,7 +987,7 @@ def run_preprocess_dataset(
         if is_multispeaker_mode(training_mode)
         else ""
     )
-    cmd = '"%s" train/preprocess.py "%s" %s %s "%s/logs/%s" %s %.1f%s' % (
+    cmd = '"%s" -m train.preprocess "%s" %s %s "%s/logs/%s" %s %.1f%s' % (
         config.python_cmd,
         trainset_dir,
         sr,
@@ -967,7 +1090,7 @@ def run_extract_f0_feature(
             f0method == "rmvpe" and not rmvpe_devices and not config.dml
         ):
             cmd = (
-                '"%s" train/dataset/extract_f0.py cpu "%s/logs/%s" %s %s'
+                '"%s" -m train.dataset.extract_f0 cpu "%s/logs/%s" %s %s'
                 % (config.python_cmd, now_dir, exp_dir, n_p, f0method)
             )
             processes.append(start_train_process(state, cmd))
@@ -975,7 +1098,7 @@ def run_extract_f0_feature(
             count = len(rmvpe_devices)
             for index, gpu in enumerate(rmvpe_devices):
                 cmd = (
-                    '"%s" train/dataset/extract_f0.py cuda %s %s %s "%s/logs/%s" %s'
+                    '"%s" -m train.dataset.extract_f0 cuda %s %s %s "%s/logs/%s" %s'
                     % (
                         config.python_cmd,
                         count,
@@ -989,7 +1112,7 @@ def run_extract_f0_feature(
                 processes.append(start_train_process(state, cmd))
         else:
             cmd = (
-                '"%s" train/dataset/extract_f0.py dml "%s/logs/%s"'
+                '"%s" -m train.dataset.extract_f0 dml "%s/logs/%s"'
                 % (config.python_cmd, now_dir, exp_dir)
             )
             processes.append(start_train_process(state, cmd))
@@ -1008,7 +1131,7 @@ def run_extract_f0_feature(
         count = len(feature_gpus)
         for index, gpu in enumerate(feature_gpus):
             cmd = (
-                '"%s" train/dataset/extract_hubert_feature.py %s %s %s %s "%s/logs/%s" %s %s'
+                '"%s" -m train.dataset.extract_hubert_feature %s %s %s %s "%s/logs/%s" %s %s'
                 % (
                     config.python_cmd,
                     config.device,
@@ -1024,7 +1147,7 @@ def run_extract_f0_feature(
             processes.append(start_train_process(state, cmd))
     else:
         cmd = (
-            '"%s" train/dataset/extract_hubert_feature.py %s 1 0 "%s/logs/%s" %s %s'
+            '"%s" -m train.dataset.extract_hubert_feature %s 1 0 "%s/logs/%s" %s %s'
             % (
                 config.python_cmd,
                 config.device,
@@ -1307,7 +1430,7 @@ def run_train_model(
         f.write("\n")
     if gpus16:
         cmd = (
-            '"%s" train/train.py -e "%s" -sr %s -f0 %s -bs %s -g %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
+            '"%s" -m train.train -e "%s" -sr %s -f0 %s -bs %s -g %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
             % (
                 config.python_cmd,
                 exp_dir1,
@@ -1327,7 +1450,7 @@ def run_train_model(
         )
     else:
         cmd = (
-            '"%s" train/train.py -e "%s" -sr %s -f0 %s -bs %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
+            '"%s" -m train.train -e "%s" -sr %s -f0 %s -bs %s -te %s -se %s %s %s -l %s -c %s -sw %s -v %s'
             % (
                 config.python_cmd,
                 exp_dir1,
@@ -1458,7 +1581,7 @@ def run_train_index(
         else "auto"
     )
     cmd = (
-        '"%s" train/train_index.py "%s" %s "%s" %s %s'
+        '"%s" -m train.train_index "%s" %s "%s" %s %s'
         % (
             config.python_cmd,
             exp_dir1,
@@ -1861,6 +1984,46 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                 clean_button.click(
                     fn=clean, inputs=[], outputs=[sid0], api_name="infer_clean"
                 )
+            with gr.Row():
+                runtime_status = gr.Textbox(
+                    label="AU / RVC runtime",
+                    value="WebUI起動時にlocalhost runnerを確認します",
+                    interactive=False,
+                    scale=4,
+                )
+                runtime_refresh = gr.Button("runtime状態を更新", scale=1)
+                runtime_apply = gr.Button("選択音色をAUへ適用", variant="primary", scale=1)
+                runtime_refresh.click(
+                    fn=rvc_runtime_status,
+                    inputs=[],
+                    outputs=[runtime_status],
+                    queue=False,
+                    api_name="rvc_runtime_health",
+                )
+            with gr.Row():
+                runtime_choice = gr.Dropdown(
+                    label="AU接続先runtime（Bonjourは明示選択）",
+                    choices=[LOCAL_CHOICE],
+                    value=LOCAL_CHOICE,
+                    interactive=True,
+                    scale=4,
+                )
+                runtime_discovery_refresh = gr.Button("Bonjour一覧を更新", scale=1)
+                runtime_select = gr.Button("このruntimeを選択", variant="primary", scale=1)
+                runtime_discovery_refresh.click(
+                    fn=refresh_rvc_runtime_choices,
+                    inputs=[],
+                    outputs=[runtime_choice, runtime_status],
+                    queue=False,
+                    api_name="rvc_runtime_discovery",
+                )
+                runtime_select.click(
+                    fn=select_rvc_runtime,
+                    inputs=[runtime_choice],
+                    outputs=[runtime_status],
+                    queue=False,
+                    api_name="rvc_runtime_select",
+                )
             with gr.TabItem(i18n("单次推理")):
                 with gr.Group():
                     with gr.Row():
@@ -1879,6 +2042,7 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                                         interactive=True,
                                     )
                             input_audio0 = gr.Audio(
+                                value=default_input_audio,
                                 label=i18n("拖拽或点击上传待处理音频"),
                                 source="upload",
                                 type="filepath",
@@ -1930,6 +2094,13 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
                                 inputs=[],
                                 outputs=sid0,
                                 api_name="infer_refresh",
+                            )
+                            runtime_apply.click(
+                                fn=configure_rvc_runtime,
+                                inputs=[sid0, file_index1],
+                                outputs=[runtime_status],
+                                queue=False,
+                                api_name="rvc_runtime_configure",
                             )
                 with gr.Group():
                     with gr.Column():
@@ -2841,4 +3012,17 @@ with gr.Blocks(title="RVC WebUI", css=TRAINING_INFO_CSS) as app:
     if config.iscolab:
         app.queue(concurrency_count=511, max_size=1022).launch(share=True)
     else:
-        launch_webui_with_port_fallback(app, config)
+        with sigterm_as_keyboard_interrupt():
+            runtime_ready = rvc_runtime_supervisor.start()
+            try:
+                if runtime_ready:
+                    rvc_runtime_gateway.start()
+                    if platform.system() == "Darwin":
+                        rvc_runtime_bonjour.start()
+                    rvc_runtime_control.start()
+                launch_webui_with_port_fallback(app, config)
+            finally:
+                rvc_runtime_control.stop()
+                rvc_runtime_bonjour.stop()
+                rvc_runtime_gateway.stop()
+                rvc_runtime_supervisor.stop()

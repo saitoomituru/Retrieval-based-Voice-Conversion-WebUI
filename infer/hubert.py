@@ -1,4 +1,5 @@
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -19,7 +20,11 @@ class HubertModelWithFinalProj(HubertModel):
         super().__init__(config)
         self.final_proj = nn.Linear(config.hidden_size, config.classifier_proj_size)
 
-HUBERT_MODEL_PATH = (PROJECT_ROOT / "assets" / "hubert_base").resolve()
+DEFAULT_HUBERT_MODEL_PATH = (PROJECT_ROOT / "assets" / "hubert_base").resolve()
+
+
+def hubert_model_path():
+    return Path(os.environ.get("hubert_root", DEFAULT_HUBERT_MODEL_PATH)).resolve()
 
 
 def _device_type(device):
@@ -30,9 +35,10 @@ def _device_type(device):
 
 def load_hubert_model(device, is_half=False):
     """Load the local Transformers HuBERT/ContentVec model for RVC."""
-    if not (HUBERT_MODEL_PATH / "config.json").is_file():
+    model_path = hubert_model_path()
+    if not (model_path / "config.json").is_file():
         raise FileNotFoundError(
-            f"Transformers HuBERT model not found: {HUBERT_MODEL_PATH}"
+            f"Transformers HuBERT model not found: {model_path}"
         )
 
     dtype = torch.float16 if is_half else torch.float32
@@ -46,12 +52,12 @@ def load_hubert_model(device, is_half=False):
 
     logger.info(
         "Loading Transformers HuBERT from %s (%s on %s)",
-        HUBERT_MODEL_PATH,
+        model_path,
         dtype,
         device,
     )
     model = HubertModelWithFinalProj.from_pretrained(
-        str(HUBERT_MODEL_PATH), **load_options
+        str(model_path), **load_options
     )
     model = model.to(device)
     return model.eval()
@@ -59,8 +65,9 @@ def load_hubert_model(device, is_half=False):
 
 @lru_cache(maxsize=1)
 def hubert_audio_requires_normalization():
+    model_path = hubert_model_path()
     feature_extractor = AutoFeatureExtractor.from_pretrained(
-        str(HUBERT_MODEL_PATH), local_files_only=True
+        str(model_path), local_files_only=True
     )
     return bool(feature_extractor.do_normalize)
 

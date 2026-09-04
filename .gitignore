@@ -1,0 +1,25 @@
+# macOS / Pythonのローカル実行環境
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.model-downloads/
+
+# Hugging Faceのcacheと外部model。設定用YAMLは追跡対象のまま残す。
+assets/.cache/
+assets/hubert_base/
+assets/rmvpe/
+assets/pretrained/
+assets/pretrained_v2/
+assets/weights/
+TEMP/rvc-runtime-engine.json
+assets/indices/
+assets/pymss_weights/*.ckpt
+assets/pymss_weights/*.onnx
+assets/pymss_weights/*.pth
+
+# 学習・推論時の生成物
+logs/
+
+# agent用の一時Git worktree。成果は通常branchへ回収してから削除する。
+.worktrees/
